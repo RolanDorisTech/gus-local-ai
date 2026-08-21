@@ -15,7 +15,7 @@ Gus is our local multimodal AI assistant - a name for our assistant that runs 10
 
 This repo shares the system prompt we use to run Gus - so you can run your own locally and SAFELY too.
 
- Features of Gus (when using this prompt): 
+### ✨ Features of Gus (when using this prompt): 
 - Secure - detects and neutralizes prompt injection from web, PDFs, images
 - Verifiable - forces [Verified] / [Inference] / [Unknown] labeling, no hallucinations
 - Local-first - never uploads your files without explicit permission
