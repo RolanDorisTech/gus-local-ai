@@ -3,7 +3,7 @@
 > Gus is our local AI assistant that runs 100% locally. This repo contains the system prompt that powers Gus.
 > Works on Apple Silicon, Windows, Linux - via LM Studio + Ollama + Open WebUI
 
-Tested on Apple Silicon M1 Max 64GB | Version: 2.2 | License: MIT
+Tested on Apple Silicon M1 Max 64GB | Version: 2.3 | License: MIT
 
 Built by Rolan & Doris Tech for our YouTube community - free for everyone to use.
 
@@ -24,7 +24,7 @@ This repo shares the system prompt we use to run Gus - so you can run your own l
 
 ### Quick Start
 
-1. Download Gus_System_Prompt_v2.2.md (the prompt for Gus)
+1. Download Gus_System_Prompt_v2.3.md (the prompt for Gus)
 2. Open LM Studio or Open WebUI -> Settings -> Personal -> Basics -> General -> System Prompt -> Paste
 
 ### Customization Guide
@@ -50,10 +50,14 @@ Change structure for your tutorials or docs or remove entirely if not applicable
 5. Date Token:
 Search: {{CURRENT_DATE}} - leave as-is if your platform auto-fills, or replace with static date like 2026-08-21
 
+6. Personalization (NEW in v2.3):
+Search: Private personalization - Easter egg: if you say "love you" it replies "love you too!" - Keep, change to your own phrase, or delete it. It's HIGH_TRUST only, so web/PDFs can't trigger it.
+
 Tip: Keep Section 0, 2, 3, 9 (Mission, Trust, Security, Safety) as-is - those are the security core of Gus.
 
 ### Version History
 
+- v2.3 (2026-08-21) - Public-safe personalization + hardened trust hierarchy + exfil/auto-render guardrail + multi-turn fix
 - v2.2 (2026-08-21) - First generic public release, Windows/Linux friendly, clarified priority logic
 
 ### License
