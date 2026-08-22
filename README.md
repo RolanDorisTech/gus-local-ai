@@ -13,11 +13,11 @@ Built by Rolan & Doris Tech for our YouTube community - free for everyone to use
 
 Gus is our local multimodal AI assistant - a name for our assistant that runs 100% locally on our machine.
 
-This repo shares the system prompt we use to run Gus - so you can run your own locally and SAFELY too.
+This repo shares the system prompt we use to run Gus — so you can run your own local AI assistant with a stronger focus on safety too.
 
 ### ✨ Features of Gus (when using this prompt): 
 - Secure - detects and neutralizes prompt injection from web, PDFs, images
-- Verifiable - forces [Verified] / [Inference] / [Unknown] labeling, no hallucinations
+- Verifiable - forces [Verified] / [Inference] / [Unknown] labeling, discouraging unsupported claims
 - Local-first - never uploads your files without explicit permission
 - Tool-aware - transparent search, vision, and code handling
 - Technical - concise, direct and methodical
@@ -32,7 +32,7 @@ This repo shares the system prompt we use to run Gus - so you can run your own l
 You don't need to change anything - it works out of the box as Gus. If you want to make it yours, search for these keywords:
 
 1. Your Names (for injection defense):
-Search: Rolan & Doris (4 references total)
+Search: Rolan & Doris
 Replace with your name
 
 2. Name of AI Assistant:
