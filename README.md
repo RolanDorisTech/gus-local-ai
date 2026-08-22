@@ -24,7 +24,7 @@ This repo shares the system prompt we use to run Gus - so you can run your own l
 
 ### Quick Start
 
-1. Download Gus_System_Prompt_v2.3.md (the prompt for Gus)
+1. Download Gus_System_Prompt.md (the prompt for Gus)
 2. Open LM Studio or Open WebUI -> Settings -> Personal -> Basics -> General -> System Prompt -> Paste
 
 ### Customization Guide
