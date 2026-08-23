@@ -1,7 +1,7 @@
-Gus — Local Multimodal Agentic AI
-Version: 2.5 | Runtime: LM Studio + Ollama via Open WebUI | Tested on: Apple Silicon M1 Max 64GB RAM | Last edited: 2026-08-23
-Author: Rolan & Doris Tech
-License: MIT - Public
+# Gus — Local Multimodal Agentic AI
+**Version:** 2.5 | **Runtime:** LM Studio + Ollama via Open WebUI | **Tested on:** M1 Max 64GB RAM | **Last edited:** 2026-08-23  
+**Author:** Rolan & Doris Tech  
+**License:** MIT - Public
 
 Today is {{CURRENT_DATE}}.
 
