@@ -1,0 +1,463 @@
+"""
+title: Persistent Memory - Local JSONL
+author: Rolan & Doris Tech
+version: 2.0
+description: Lightweight persistent JSONL memory for Open WebUI. Stores concise user facts and project preferences locally and survives restarts.
+"""
+
+import json
+import os
+import re
+import threading
+import uuid
+from datetime import datetime
+from typing import List, Dict, Any
+
+from pydantic import BaseModel, Field
+
+
+class Tools:
+    """
+    Persistent local memory using a JSONL file.
+
+    This tool is intentionally simple and lightweight:
+    - No database required
+    - No embeddings required
+    - No external services
+    - Memory survives restarts
+    - Keyword-based retrieval
+    """
+
+    class Valves(BaseModel):
+        memory_file: str = Field(
+            default="/app/backend/data/persistent-memory/memory.jsonl",
+            description=(
+                "Primary JSONL memory file path. Change this if you want "
+                "to store memory elsewhere."
+            ),
+        )
+
+        max_results: int = Field(
+            default=5,
+            ge=1,
+            le=20,
+            description=(
+                "Maximum number of matching memories returned per search."
+            ),
+        )
+
+        max_memory_length: int = Field(
+            default=2000,
+            ge=100,
+            le=10000,
+            description=(
+                "Maximum character length for a single stored memory."
+            ),
+        )
+
+        enable_duplicate_check: bool = Field(
+            default=True,
+            description="Skip exact duplicate memories.",
+        )
+
+    def __init__(self):
+        self.valves = self.Valves()
+
+        # RLock is required because update_memory() can call _load()
+        # while already holding the same lock.
+        self._lock = threading.RLock()
+
+        self._memory_file = os.path.expanduser(
+            os.path.expandvars(self.valves.memory_file)
+        )
+
+        try:
+            self._ensure_memory_file()
+        except Exception as e:
+            print(f"Persistent Memory initialization error: {e}")
+
+    def _ensure_memory_file(self) -> None:
+        """Create the memory directory and JSONL file if needed."""
+
+        directory = os.path.dirname(self._memory_file)
+
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+
+        if not os.path.exists(self._memory_file):
+            with open(
+                self._memory_file,
+                "a",
+                encoding="utf-8",
+            ):
+                pass
+
+    def _load(self) -> List[Dict[str, Any]]:
+        """Load valid JSONL memory entries."""
+
+        memories = []
+
+        if not os.path.exists(self._memory_file):
+            return memories
+
+        try:
+            with self._lock:
+                with open(
+                    self._memory_file,
+                    "r",
+                    encoding="utf-8",
+                ) as file:
+
+                    for line in file:
+                        line = line.strip()
+
+                        if not line:
+                            continue
+
+                        try:
+                            entry = json.loads(line)
+
+                            if isinstance(entry, dict):
+                                memories.append(entry)
+
+                        except json.JSONDecodeError:
+                            # Skip malformed lines instead of failing the
+                            # entire memory store.
+                            continue
+
+        except Exception as e:
+            print(f"Persistent Memory load error: {e}")
+
+        return memories
+
+    def _tokenize(self, text: str) -> List[str]:
+        """
+        Normalize and tokenize text for lightweight keyword matching.
+
+        Supports normal alphanumeric words as well as Chinese,
+        Japanese, and Korean text.
+        """
+
+        text = text.lower().strip()
+
+        return re.findall(
+            r"[a-z0-9_][a-z0-9_\-]*"
+            r"|[\u4e00-\u9fff]+"
+            r"|[\u3040-\u30ff]+"
+            r"|[\uac00-\ud7af]+",
+            text,
+        )
+
+    def _score_memory(
+        self,
+        query: str,
+        memory: Dict[str, Any],
+    ) -> int:
+        """Return a simple relevance score for one memory entry."""
+
+        content = str(
+            memory.get("content", "")
+        ).lower()
+
+        path = str(
+            memory.get("path", "")
+        ).lower()
+
+        searchable = f"{path} {content}"
+
+        query_normalized = query.lower().strip()
+
+        if not query_normalized:
+            return 0
+
+        score = 0
+
+        # Strong score for the complete query appearing directly.
+        if query_normalized in searchable:
+            score += 10
+
+        query_tokens = self._tokenize(query_normalized)
+
+        for token in query_tokens:
+
+            # Category/path matches are weighted more strongly.
+            if token in path:
+                score += 4
+
+            if token in content:
+                score += 2
+
+        return score
+
+    def search_memory(
+        self,
+        query: str = Field(
+            ...,
+            description=(
+                "What to search for in persistent memory. Use concise "
+                "keywords such as a hardware model, project name, "
+                "preference, or topic."
+            ),
+        ),
+    ) -> str:
+        """
+        Search persistent local JSONL memory.
+
+        Use when previous user-specific information would materially
+        improve the answer, such as hardware specifications, project
+        decisions, preferences, or previously saved facts.
+
+        This is keyword-based retrieval, not semantic/vector search.
+        """
+
+        query = query.strip()
+
+        if not query:
+            return "No search query was provided."
+
+        memories = self._load()
+
+        if not memories:
+            return (
+                "No memories are stored yet. "
+                "Do not retry unless new memory is added."
+            )
+
+        scored = []
+
+        for memory in memories:
+
+            score = self._score_memory(
+                query,
+                memory,
+            )
+
+            if score > 0:
+                scored.append(
+                    (score, memory)
+                )
+
+        # Higher relevance first.
+        # For equal relevance, newer memories first.
+        scored.sort(
+            key=lambda item: (
+                item[0],
+                item[1].get("timestamp", ""),
+            ),
+            reverse=True,
+        )
+
+        hits = [
+            memory
+            for _, memory in scored[
+                :self.valves.max_results
+            ]
+        ]
+
+        if not hits:
+            return (
+                f"No relevant memory was found for '{query}'. "
+                "Answer using the current conversation or general knowledge."
+            )
+
+        lines = []
+
+        for memory in hits:
+
+            timestamp = str(
+                memory.get("timestamp", "")
+            )[:19]
+
+            path = str(
+                memory.get(
+                    "path",
+                    "uncategorized",
+                )
+            )
+
+            content = str(
+                memory.get("content", "")
+            )
+
+            lines.append(
+                f"[{timestamp}] [{path}] {content}"
+            )
+
+        return (
+            "Relevant persistent memories found:\n"
+            + "\n".join(lines)
+            + "\n\nUse these memories when relevant. "
+              "Do not repeatedly search for the same information."
+        )
+
+    def update_memory(
+        self,
+        content: str = Field(
+            ...,
+            description=(
+                "Concise fact, preference, decision, or project detail "
+                "to remember."
+            ),
+        ),
+        path: str = Field(
+            ...,
+            description=(
+                "Short category path such as 'hardware/M1Max', "
+                "'project/MyProject', or 'preferences/response-style'."
+            ),
+        ),
+    ) -> str:
+        """
+        Save a concise fact to persistent local memory.
+
+        Use only when the user explicitly asks to remember, save, store,
+        or retain information for future conversations.
+        """
+
+        content = content.strip()
+        path = path.strip()
+
+        if not content:
+            return "ERROR: Memory content cannot be empty."
+
+        if not path:
+            return "ERROR: Memory path cannot be empty."
+
+        if len(content) > self.valves.max_memory_length:
+            return (
+                "ERROR: Memory is too long. "
+                f"Maximum length is "
+                f"{self.valves.max_memory_length} characters."
+            )
+
+        try:
+            self._ensure_memory_file()
+
+        except Exception as e:
+            return (
+                f"ERROR: Cannot create memory directory: {e}"
+            )
+
+        with self._lock:
+
+            if self.valves.enable_duplicate_check:
+
+                memories = self._load()
+
+                normalized_content = content.lower()
+
+                for memory in memories:
+
+                    existing_content = str(
+                        memory.get("content", "")
+                    ).strip().lower()
+
+                    if (
+                        existing_content
+                        == normalized_content
+                    ):
+
+                        existing_path = memory.get(
+                            "path",
+                            "uncategorized",
+                        )
+
+                        return (
+                            f"Already remembered in "
+                            f"'{existing_path}' "
+                            "- skipping duplicate."
+                        )
+
+            entry = {
+                "id": str(uuid.uuid4()),
+                "content": content,
+                "path": path,
+                "timestamp": datetime.now().isoformat(),
+            }
+
+            try:
+                with open(
+                    self._memory_file,
+                    "a",
+                    encoding="utf-8",
+                ) as file:
+
+                    file.write(
+                        json.dumps(
+                            entry,
+                            ensure_ascii=False,
+                        )
+                        + "\n"
+                    )
+
+                    file.flush()
+
+            except Exception as e:
+                return (
+                    f"ERROR: Could not save memory: {e}"
+                )
+
+        return (
+            f"Saved persistent memory: "
+            f"[{path}] {content}"
+        )
+
+    def list_recent_memories(
+        self,
+        limit: int = Field(
+            default=10,
+            ge=1,
+            le=50,
+            description=(
+                "Maximum number of recent memories to return."
+            ),
+        ),
+    ) -> str:
+        """
+        List the most recently saved memories.
+
+        Useful when the user asks what is currently stored in memory.
+        """
+
+        memories = self._load()
+
+        if not memories:
+            return (
+                "No memories are currently stored."
+            )
+
+        memories.sort(
+            key=lambda memory: memory.get(
+                "timestamp",
+                "",
+            ),
+            reverse=True,
+        )
+
+        lines = []
+
+        for memory in memories[:limit]:
+
+            timestamp = str(
+                memory.get("timestamp", "")
+            )[:19]
+
+            path = str(
+                memory.get(
+                    "path",
+                    "uncategorized",
+                )
+            )
+
+            content = str(
+                memory.get("content", "")
+            )
+
+            lines.append(
+                f"[{timestamp}] [{path}] {content}"
+            )
+
+        return (
+            "Most recent persistent memories:\n"
+            + "\n".join(lines)
+        )
