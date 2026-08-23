@@ -1,14 +1,15 @@
 """
-title: Gus Context Manager
+title: Gus_Context_Manager.py
 author: Rolan & Doris Tech
-version: 7.7
-description: Low-memory context manager for Open WebUI with text-only background
-compaction preparation, conservative custom file retrieval, explicit file-reference
-clearing, follow-up-aware retrieval, top-k file chunk injection, stale-job
-cancellation, and Qwen3:1.7B web-content sanitization.
+version: 7.8
+description: Low-memory predictive context manager. O(1) normal inlet,
+text-only post-response snapshot, custom file retrieval via Open WebUI RAG,
+conservative file-intent gating, explicit file-reference clearing,
+follow-up-aware retrieval, top-k file chunk injection,
+stale-job cancellation, Qwen3.5-2B MLX sanitizer via Ollama,
+and Qwen3.5-4B MLX compactor via MLX-VLM.
 requirements: requests
 """
-
 
 import re
 import threading
@@ -353,7 +354,10 @@ def _estimate_tokens_fast(messages: List[Dict]) -> int:
     return chars // 4
 
 
-def _make_text_snapshot_and_estimate(messages: List[Dict], cutoff: int):
+def _make_text_snapshot_and_estimate(
+    messages: List[Dict],
+    cutoff: int,
+):
     """
     ONE pass over the conversation.
 
@@ -395,7 +399,7 @@ def _make_text_snapshot_and_estimate(messages: List[Dict], cutoff: int):
                 }
             )
 
-    return (snapshot, total_chars // 4)
+    return snapshot, total_chars // 4
 
 
 def _format_summary_prompt(messages: List[Dict]) -> str:
@@ -511,9 +515,7 @@ def _looks_like_web_content(message: Dict) -> bool:
 
     role = str(message.get("role", "")).lower()
 
-    if role in {
-        "user",
-    }:
+    if role == "user":
         return False
 
     content = _extract_text(message.get("content", ""))
@@ -542,7 +544,13 @@ def _looks_like_web_content(message: Dict) -> bool:
         return True
 
     # URL-heavy content is probably sourced material.
-    url_count = len(re.findall(r"https?://", content, re.I))
+    url_count = len(
+        re.findall(
+            r"https?://",
+            content,
+            re.I,
+        )
+    )
 
     if url_count >= 1:
         return True
@@ -573,7 +581,7 @@ class Filter:
 
         emergency_ratio: float = Field(default=0.90)
 
-        # 8 seconds: aggressive, fast compaction for Qwen3:1.7B.
+        # 8 seconds: aggressive idle compaction.
         idle_seconds: int = Field(default=8)
 
         eager_delay: float = Field(default=2.0)
@@ -583,12 +591,18 @@ class Filter:
         compact_ratio: float = Field(default=0.50)
 
         # ----------------------------------------------------
-        # Ollama / Qwen3:1.7B compactor
+        # Qwen3.5-4B COMPACTOR
+        #
+        # MLX-VLM OpenAI-compatible server.
+        #
+        # Port 8081 is reserved for the compactor.
         # ----------------------------------------------------
 
-        compactor_url: str = Field(default=("http://127.0.0.1:11434/api/chat"))
+        compactor_url: str = Field(
+            default=("http://127.0.0.1:8081" "/v1/chat/completions")
+        )
 
-        compactor_model: str = Field(default="qwen3:1.7b")
+        compactor_model: str = Field(default="mlx-community/Qwen3.5-4B-4bit")
 
         compactor_context: int = Field(default=4096)
 
@@ -598,19 +612,22 @@ class Filter:
 
         compactor_timeout: int = Field(default=90)
 
-        # Keep Qwen3:1.7B resident to avoid reload latency.
-        compactor_keep_alive: str = Field(default="-1")
-
         # Hard cap on text sent to compactor.
         compactor_max_chars: int = Field(default=8000)
 
         # ----------------------------------------------------
-        # Qwen3:1.7B web sanitizer
+        # Qwen3.5-2B MLX WEB SANITIZER
         #
-        # Same model as compactor.
-        # Same Ollama server.
-        # No additional model download.
+        # Ollama API.
+        #
+        # This remains separate from the compactor.
         # ----------------------------------------------------
+
+        sanitizer_url: str = Field(default=("http://127.0.0.1:11434" "/api/chat"))
+
+        sanitizer_model: str = Field(default="qwen3.5:2b-mlx")
+
+        sanitizer_context: int = Field(default=4096)
 
         enable_web_sanitizer: bool = Field(default=True)
 
@@ -622,10 +639,7 @@ class Filter:
 
         sanitizer_max_chars: int = Field(default=6000)
 
-        # Keep sanitizer model resident too.
-        # Since it is the SAME qwen3:1.7b model, Ollama
-        # can reuse the loaded model instead of loading
-        # another model.
+        # Keep sanitizer model resident.
         sanitizer_keep_alive: str = Field(default="-1")
 
         # ----------------------------------------------------
@@ -654,10 +668,6 @@ class Filter:
 
     # ========================================================
     # EXPLICIT FILE CLEAR
-    #
-    # This is intentionally centralized so EVERY code path
-    # can suppress Open WebUI's built-in RAG when this filter
-    # owns retrieval.
     # ========================================================
 
     @staticmethod
@@ -675,19 +685,11 @@ class Filter:
     # SMART FILE INTENT GATE
     # ========================================================
 
-    def _should_retrieve_file(self, query: str, chat_id: str) -> bool:
-        """
-        Conservative decision:
-
-        TRUE:
-            explicit document reference
-            OR genuine document follow-up
-
-        FALSE:
-            normal conversation
-            trivial prompts
-            unrelated questions
-        """
+    def _should_retrieve_file(
+        self,
+        query: str,
+        chat_id: str,
+    ) -> bool:
 
         q = query.strip().lower()
 
@@ -708,7 +710,10 @@ class Filter:
 
             with STATE_LOCK:
 
-                state = CHAT_STATE.setdefault(chat_id, {})
+                state = CHAT_STATE.setdefault(
+                    chat_id,
+                    {},
+                )
 
                 state["file_followup_remaining"] = self.valves.file_followup_turns
 
@@ -716,9 +721,6 @@ class Filter:
 
         # ----------------------------------------------------
         # Follow-up intent.
-        #
-        # The new message must itself look like a reference
-        # to the prior file discussion.
         # ----------------------------------------------------
 
         with STATE_LOCK:
@@ -728,7 +730,12 @@ class Filter:
             if not state:
                 return False
 
-            remaining = int(state.get("file_followup_remaining", 0))
+            remaining = int(
+                state.get(
+                    "file_followup_remaining",
+                    0,
+                )
+            )
 
         if remaining <= 0:
             return False
@@ -743,15 +750,22 @@ class Filter:
             if state:
 
                 state["file_followup_remaining"] = max(
-                    0, int(state.get("file_followup_remaining", 0)) - 1
+                    0,
+                    int(
+                        state.get(
+                            "file_followup_remaining",
+                            0,
+                        )
+                    )
+                    - 1,
                 )
 
         return True
 
     # ========================================================
-    # QWEN3:1.7B WEB SANITIZER
+    # QWEN3.5-2B WEB SANITIZER
     #
-    # Same tiny model as compactor.
+    # Ollama API.
     #
     # IMPORTANT:
     # This only runs on content that looks like retrieved
@@ -760,7 +774,10 @@ class Filter:
     # It does NOT run on normal user messages.
     # ========================================================
 
-    def _sanitize_web_text(self, text: str) -> str:
+    def _sanitize_web_text(
+        self,
+        text: str,
+    ) -> str:
 
         if not text:
             return text
@@ -770,9 +787,6 @@ class Filter:
 
         # ----------------------------------------------------
         # Cheap regex first.
-        #
-        # If there is no obvious injection signal and the
-        # source content is ordinary, don't spend GPU time.
         # ----------------------------------------------------
 
         if not INJECTION_RE.search(text):
@@ -780,7 +794,7 @@ class Filter:
             return text
 
         # ----------------------------------------------------
-        # Hard cap before sending to the 1.7B model.
+        # Hard cap.
         # ----------------------------------------------------
 
         if len(text) > self.valves.sanitizer_max_chars:
@@ -801,9 +815,9 @@ class Filter:
         try:
 
             response = requests.post(
-                self.valves.compactor_url,
+                self.valves.sanitizer_url,
                 json={
-                    "model": (self.valves.compactor_model),
+                    "model": (self.valves.sanitizer_model),
                     "messages": [
                         {
                             "role": "user",
@@ -815,9 +829,9 @@ class Filter:
                     "options": {
                         "temperature": (self.valves.sanitizer_temperature),
                         "num_predict": (self.valves.sanitizer_max_tokens),
-                        "num_ctx": (self.valves.compactor_context),
+                        "num_ctx": (self.valves.sanitizer_context),
                     },
-                    "keep_alive": (self.valves.compactor_keep_alive),
+                    "keep_alive": (self.valves.sanitizer_keep_alive),
                 },
                 timeout=(self.valves.sanitizer_timeout),
             )
@@ -829,27 +843,32 @@ class Filter:
             cleaned = data.get("message", {}).get("content", "")
 
             if not isinstance(cleaned, str):
+
                 cleaned = str(cleaned)
 
             cleaned = cleaned.strip()
 
             if cleaned:
+
                 return cleaned
 
         except Exception as e:
 
-            print("Qwen3:1.7B web sanitizer failed: " f"{type(e).__name__}: {e}")
+            print("Qwen3.5-2B web sanitizer failed: " f"{type(e).__name__}: {e}")
 
         # Fail safe:
-        # If the sanitizer fails, preserve the original content
-        # rather than silently deleting useful source material.
+        # Preserve original content rather than silently
+        # deleting useful source material.
         return text
 
-    def _sanitize_web_messages(self, messages: List[Dict]) -> None:
+    def _sanitize_web_messages(
+        self,
+        messages: List[Dict],
+    ) -> None:
         """
         Scan only web/search/tool-like messages.
 
-        The 1.7B model is invoked only if the cheap injection
+        The sanitizer is invoked only if the cheap injection
         regex finds a possible injection.
         """
 
@@ -864,7 +883,10 @@ class Filter:
             if not _looks_like_web_content(message):
                 continue
 
-            content = message.get("content", "")
+            content = message.get(
+                "content",
+                "",
+            )
 
             text = _extract_text(content)
 
@@ -890,7 +912,10 @@ class Filter:
     # ========================================================
 
     def _retrieve_file_chunks(
-        self, file_ref: Dict, query: str, headers: Dict[str, str]
+        self,
+        file_ref: Dict,
+        query: str,
+        headers: Dict[str, str],
     ) -> List[str]:
 
         collection_name = _get_collection_name(file_ref)
@@ -904,7 +929,7 @@ class Filter:
                 self.valves.retrieval_url,
                 headers={
                     **headers,
-                    "Content-Type": "application/json",
+                    "Content-Type": ("application/json"),
                 },
                 json={
                     "collection_name": collection_name,
@@ -918,7 +943,10 @@ class Filter:
 
             data = response.json()
 
-            documents = data.get("documents", [])
+            documents = data.get(
+                "documents",
+                [],
+            )
 
             if not isinstance(documents, list):
                 return []
@@ -943,12 +971,15 @@ class Filter:
 
         except Exception as e:
 
-            print("Gus 7.7 file retrieval error: " f"{type(e).__name__}: {e}")
+            print("Gus 7.8 file retrieval error: " f"{type(e).__name__}: {e}")
 
             return []
 
     def _retrieve_attached_files(
-        self, body: dict, messages: List[Dict], request: Any
+        self,
+        body: dict,
+        messages: List[Dict],
+        request: Any,
     ) -> bool:
         """
         Retrieve only top-k relevant chunks from attached files.
@@ -974,7 +1005,10 @@ class Filter:
         # Smart gate.
         # ----------------------------------------------------
 
-        if not self._should_retrieve_file(query, chat_id):
+        if not self._should_retrieve_file(
+            query,
+            chat_id,
+        ):
             return False
 
         headers = _request_auth_headers(request)
@@ -987,9 +1021,15 @@ class Filter:
 
         with STATE_LOCK:
 
-            state = CHAT_STATE.setdefault(chat_id, {})
+            state = CHAT_STATE.setdefault(
+                chat_id,
+                {},
+            )
 
-            retrieval_cache = state.setdefault("file_query_cache", {})
+            retrieval_cache = state.setdefault(
+                "file_query_cache",
+                {},
+            )
 
         # ----------------------------------------------------
         # Retrieve each attached file.
@@ -1030,7 +1070,10 @@ class Filter:
 
                             oldest = next(iter(retrieval_cache))
 
-                            retrieval_cache.pop(oldest, None)
+                            retrieval_cache.pop(
+                                oldest,
+                                None,
+                            )
 
                         retrieval_cache[cache_key] = chunks
 
@@ -1096,7 +1139,11 @@ class Filter:
             + "\n[/Relevant file context]"
         )
 
-        for index in range(len(messages) - 1, -1, -1):
+        for index in range(
+            len(messages) - 1,
+            -1,
+            -1,
+        ):
 
             message = messages[index]
 
@@ -1119,16 +1166,6 @@ class Filter:
 
     # ========================================================
     # INLET
-    #
-    # CRITICAL:
-    #
-    # 1. Inspect file refs.
-    # 2. Retrieve ours only when appropriate.
-    # 3. Sanitize suspicious web/search content with Qwen3:1.7B.
-    # 4. ALWAYS clear file refs before returning.
-    #
-    # This prevents Open WebUI's built-in RAG path from seeing
-    # the attached file references afterward.
     # ========================================================
 
     async def inlet(
@@ -1144,7 +1181,10 @@ class Filter:
         if not chat_id:
             return body
 
-        messages = body.get("messages", [])
+        messages = body.get(
+            "messages",
+            [],
+        )
 
         if not isinstance(messages, list):
             messages = []
@@ -1158,7 +1198,7 @@ class Filter:
             )
 
             # ------------------------------------------------
-            # Qwen3:1.7B sanitizer.
+            # Qwen3.5-2B sanitizer.
             #
             # Only suspicious web/search/tool content is sent
             # to the model. Normal user messages are untouched.
@@ -1168,14 +1208,17 @@ class Filter:
 
         except Exception as e:
 
-            print("Gus 7.7 file handler error: " f"{type(e).__name__}: {e}")
+            print("Gus 7.8 file handler error: " f"{type(e).__name__}: {e}")
 
         finally:
 
+            # ------------------------------------------------
             # CRITICAL DEFENSIVE CLEAR.
             #
             # Do this even when the smart file gate rejects
             # the current prompt.
+            # ------------------------------------------------
+
             self._clear_file_refs(body)
 
         # ----------------------------------------------------
@@ -1186,9 +1229,18 @@ class Filter:
 
         with STATE_LOCK:
 
-            state = CHAT_STATE.setdefault(str(chat_id), {})
+            state = CHAT_STATE.setdefault(
+                str(chat_id),
+                {},
+            )
 
-            state["conversation_version"] = state.get("conversation_version", 0) + 1
+            state["conversation_version"] = (
+                state.get(
+                    "conversation_version",
+                    0,
+                )
+                + 1
+            )
 
             version = state["conversation_version"]
 
@@ -1206,7 +1258,11 @@ class Filter:
     # Compaction starts AFTER current generation completes.
     # ========================================================
 
-    def outlet(self, body: dict, __user__: dict = None) -> dict:
+    def outlet(
+        self,
+        body: dict,
+        __user__: dict = None,
+    ) -> dict:
 
         try:
 
@@ -1215,7 +1271,10 @@ class Filter:
             if not chat_id:
                 return body
 
-            messages = body.get("messages", [])
+            messages = body.get(
+                "messages",
+                [],
+            )
 
             if not isinstance(messages, list):
                 return body
@@ -1230,9 +1289,15 @@ class Filter:
                 if not state:
                     return body
 
-                version = state.get("conversation_version", 0)
+                version = state.get(
+                    "conversation_version",
+                    0,
+                )
 
-                if state.get("compaction_active", False):
+                if state.get(
+                    "compaction_active",
+                    False,
+                ):
                     return body
 
                 state["compaction_active"] = True
@@ -1249,7 +1314,7 @@ class Filter:
 
         except Exception as e:
 
-            print("Gus 7.7 outlet error: " f"{type(e).__name__}: {e}")
+            print("Gus 7.8 outlet error: " f"{type(e).__name__}: {e}")
 
         return body
 
@@ -1258,7 +1323,10 @@ class Filter:
     # ========================================================
 
     def _prepare_compaction(
-        self, chat_id: str, scheduled_version: int, messages: List[Dict]
+        self,
+        chat_id: str,
+        scheduled_version: int,
+        messages: List[Dict],
     ):
 
         snapshot: List[Dict] = []
@@ -1267,9 +1335,18 @@ class Filter:
 
             cutoff = int(len(messages) * self.valves.compact_ratio)
 
-            cutoff = max(1, min(cutoff, len(messages)))
+            cutoff = max(
+                1,
+                min(
+                    cutoff,
+                    len(messages),
+                ),
+            )
 
-            snapshot, estimated_tokens = _make_text_snapshot_and_estimate(
+            (
+                snapshot,
+                estimated_tokens,
+            ) = _make_text_snapshot_and_estimate(
                 messages,
                 cutoff,
             )
@@ -1277,7 +1354,10 @@ class Filter:
             # Release original multimodal reference immediately.
             del messages
 
-            ratio = estimated_tokens / max(1, self.valves.context_window)
+            ratio = estimated_tokens / max(
+                1,
+                self.valves.context_window,
+            )
 
             with STATE_LOCK:
 
@@ -1300,9 +1380,6 @@ class Filter:
 
             # ------------------------------------------------
             # 60-75%: idle tier.
-            #
-            # With idle_seconds=8, compaction begins after
-            # 8 seconds without a NEW message.
             # ------------------------------------------------
 
             if ratio < self.valves.use_ratio:
@@ -1320,15 +1397,17 @@ class Filter:
                         return
 
                     if (
-                        time.time() - state.get("last_activity", 0)
+                        time.time()
+                        - state.get(
+                            "last_activity",
+                            0,
+                        )
                         < self.valves.idle_seconds
                     ):
                         return
 
             # ------------------------------------------------
             # 75-90%: eager tier.
-            #
-            # Only wait 2 seconds after response.
             # ------------------------------------------------
 
             elif ratio < self.valves.emergency_ratio:
@@ -1349,8 +1428,6 @@ class Filter:
 
             # ------------------------------------------------
             # >=90%: emergency.
-            #
-            # No artificial delay.
             # ------------------------------------------------
 
             else:
@@ -1382,10 +1459,14 @@ class Filter:
                 state["compacting_version"] = scheduled_version
 
             # ------------------------------------------------
-            # Run Qwen3:1.7B.
+            # Run Qwen3.5-4B compactor.
             # ------------------------------------------------
 
-            summary, new_cutoff, new_hash = self._generate_summary(snapshot)
+            (
+                summary,
+                new_cutoff,
+                new_hash,
+            ) = self._generate_summary(snapshot)
 
             # ------------------------------------------------
             # Store only if still current.
@@ -1413,7 +1494,7 @@ class Filter:
 
         except Exception as e:
 
-            print("Gus 7.7 compaction error: " f"{type(e).__name__}: {e}")
+            print("Gus 7.8 compaction error: " f"{type(e).__name__}: {e}")
 
         finally:
 
@@ -1430,16 +1511,19 @@ class Filter:
                     state["compacting_version"] = None
 
     # ========================================================
-    # QWEN3:1.7B COMPACTOR
+    # QWEN3.5-4B COMPACTOR
     #
-    # Ollama:
-    #     http://127.0.0.1:11434/api/chat
+    # MLX-VLM OpenAI-compatible API:
+    #
+    # http://127.0.0.1:8081/v1/chat/completions
     #
     # Text-only input.
-    # Thinking disabled.
     # ========================================================
 
-    def _generate_summary(self, messages: List[Dict]):
+    def _generate_summary(
+        self,
+        messages: List[Dict],
+    ):
 
         conversation = _format_summary_prompt(messages)
 
@@ -1481,16 +1565,9 @@ class Filter:
                             "content": prompt,
                         }
                     ],
+                    "temperature": (self.valves.compactor_temperature),
+                    "max_tokens": (self.valves.compactor_max_tokens),
                     "stream": False,
-                    # Disable reasoning for fast compaction.
-                    "think": False,
-                    "options": {
-                        "temperature": (self.valves.compactor_temperature),
-                        "num_predict": (self.valves.compactor_max_tokens),
-                        "num_ctx": (self.valves.compactor_context),
-                    },
-                    # Keep Qwen3:1.7B resident.
-                    "keep_alive": (self.valves.compactor_keep_alive),
                 },
                 timeout=(self.valves.compactor_timeout),
             )
@@ -1499,9 +1576,19 @@ class Filter:
 
             data = response.json()
 
-            summary = data.get("message", {}).get("content", "")
+            choices = data.get(
+                "choices",
+                [],
+            )
+
+            if not choices:
+
+                raise ValueError("MLX-VLM compactor returned " "no choices.")
+
+            summary = choices[0].get("message", {}).get("content", "")
 
             if not isinstance(summary, str):
+
                 summary = str(summary)
 
             summary = summary.strip()
@@ -1526,7 +1613,7 @@ class Filter:
 
         except Exception as e:
 
-            print("Qwen3:1.7B compactor failed: " f"{type(e).__name__}: {e}")
+            print("Qwen3.5-4B compactor failed: " f"{type(e).__name__}: {e}")
 
             return (
                 "Compaction failed; retain existing context.",
