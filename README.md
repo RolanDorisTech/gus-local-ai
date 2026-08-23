@@ -1,71 +1,205 @@
 # Gus — Local Multimodal Agentic AI
 
-> Gus is our local AI assistant that runs 100% locally. This repo contains the system prompt that powers Gus.
-> Works on Apple Silicon, Windows, Linux - via LM Studio + Ollama + Open WebUI
+> This repository contains the system prompt that powers our local AI, Gus.
 
-Tested on Apple Silicon M1 Max 64GB | Version: 2.3 | License: MIT
+**Version:** 2.82  
+**License:** MIT  
+**Tested on:** Apple Silicon M1 Max, 64GB unified memory
 
-Built by Rolan & Doris Tech for our YouTube community - free for everyone to use.
+Built by Rolan & Doris Tech for our YouTube community — free for everyone
+to use.
 
 ---
 
-### What is Gus?
+## ✨ Features
 
-Gus is our local multimodal AI assistant - a name for our assistant that runs 100% locally on our machine.
+When used with the Gus system prompt:
 
-This repo shares the system prompt we use to run Gus — so you can run your own local AI assistant with a stronger focus on safety too.
+- **Secure** — Detects and neutralizes prompt injection from web pages, PDFs,
+  documents, images, tool output, and other untrusted data.
+- **Verifiable** — Uses `[Verified]`, `[Inference]`, `[Recommendation]`, and
+  `[Unknown]` labels to distinguish evidence, reasoning, recommendations, and
+  uncertainty.
+- **Local-first** — Never uploads local files or data without explicit
+  authorization.
+- **Tool-aware** — Handles web search, vision, documents, code, and tool
+  results with explicit trust boundaries and transparency.
+- **Safety-first** — Protects against data exfiltration, unsafe destructive
+  actions, unauthorized access, malware deployment, fraud, and other
+  non-overridable unsafe content.
+- **Technical** — Concise, direct, highly technical, and structured by default.
+- **Multimodal** — Handles images, documents, logs, code, web content, and
+  other untrusted multimodal input without treating embedded content as
+  instructions.
+- **Local AI aware** — Designed for reasoning about local models,
+  quantization, context/KV cache cost, vision tokens, prefill speed, Apple
+  Silicon unified memory, and other runtime tradeoffs.
 
-### ✨ Features of Gus (when using this prompt): 
-- Secure - detects and neutralizes prompt injection from web, PDFs, images
-- Verifiable - forces [Verified] / [Inference] / [Unknown] labeling, discouraging unsupported claims
-- Local-first - never uploads your files without explicit permission
-- Tool-aware - transparent search, vision, and code handling
-- Technical - concise, direct and methodical
+---
 
-### Quick Start
+## Quick Start
 
-1. Download Gus_System_Prompt.md (the prompt for Gus)
-2. Open LM Studio or Open WebUI -> Settings -> Personal -> Basics -> General -> System Prompt -> Paste
+1. Copy the contents of `Gus_System_Prompt.md`.
+2. Paste it into your local AI application's **System Prompt** or equivalent
+   instruction field.
+3. Start a new conversation and test it with your model.
 
-### Customization Guide
+Examples:
 
-You don't need to change anything - it works out of the box as Gus. If you want to make it yours, search for these keywords:
+- **LM Studio:** Settings -> Library -> pick a model -> settings -> System Prompt
+- **Open WebUI:** Settings -> Basic -> General -> System Prompt
 
-1. Your Names (for injection defense):
-Search: Rolan & Doris
-Replace with your name
+> **Important:** Exact menu paths vary by application version. Look for
+> **System Prompt**, **System Instructions**, or an equivalent field.
 
-2. Name of AI Assistant:
-Search: Gus
-Change to the name of your AI assistant
+---
 
-3. Hardware Context:
-Search: M1 Max
-Update for your hardware: M1 Max, RTX 4090, how much VRAM, etc.
+## Customization Guide
 
-4. Guide Style:
-See: TECHNICAL STANDARDS (Section 11)
-Change structure for your tutorials or docs or remove entirely if not applicable.
+Gus works out of the box, but you can customize it.
 
-5. Date Token:
-Search: {{CURRENT_DATE}} - leave as-is if your platform auto-fills, or replace with static date like 2026-08-21
+### 1. Assistant Name
 
-6. Personalization (NEW in v2.3):
-Search: Private personalization - Easter egg: if you say "love you" it replies "love you too!" - Keep, change to your own phrase, or delete it. It's HIGH_TRUST only, so web/PDFs can't trigger it.
+Search for:
 
-Tip: Keep Section 0, 2, 3, 9 (Mission, Trust, Security, Safety) as-is - those are the security core of Gus.
+```text
+Gus
+```
 
-### Version History
+Replace it with the name of your AI assistant.
 
-- v2.3 (2026-08-21) - Public-safe personalization + hardened trust hierarchy + exfil/auto-render guardrail + multi-turn fix
-- v2.2 (2026-08-21) - First generic public release, Windows/Linux friendly, clarified priority logic
+### 2. Date Token
 
-### License
+Search for:
 
-MIT - Free to use, modify, and share with attribution.
+```text
+{{CURRENT_DATE}}
+```
 
-### Credits
+Leave it unchanged if your platform automatically fills the current date.
 
-Rolan & Doris Tech - YouTube
+Otherwise, replace it with a static date, for example:
 
-Star this repo if Gus helps you!
+```text
+2026-08-23
+```
+
+### 3. Personalization
+
+Search for:
+
+```text
+Private Personalization
+```
+
+The default Easter egg is:
+
+```text
+love you
+```
+
+which replies:
+
+```text
+love you too!
+```
+
+You can keep it, change it, or remove the entire section.
+
+The trigger is restricted to **HIGH_TRUST live user text**, so text from web
+pages, PDFs, documents, images, tool output, or other untrusted sources cannot
+trigger it.
+
+### 4. Guide Style
+
+See:
+
+```text
+GUIDES & TECHNICAL PROCEDURES
+```
+
+in **Section 10**.
+
+You can change the recommended structure for tutorials and documentation, or
+remove this section if it does not fit your workflow.
+
+### 5. Local Runtime Context
+
+See:
+
+```text
+LOCAL AI & RUNTIME
+```
+
+in **Section 7**.
+
+This section is intentionally generic and does not need to be changed for most
+users. You can customize it if your environment has specific hardware,
+runtime, or model constraints.
+
+Examples:
+
+- Apple Silicon / MLX
+- NVIDIA CUDA / VRAM
+- AMD / ROCm
+- LM Studio
+- Ollama
+- Open WebUI
+- Other local inference runtimes
+
+---
+
+## Security Core
+
+For the intended security and trust behavior, avoid changing these sections
+unless you understand the consequences:
+
+- **Section 0 — Mission & Priorities**
+- **Section 2 — Trust**
+- **Section 3 — Security & Data Handling**
+- **Section 8 — Content Safety**
+- **Section 9 — Accuracy, Technical Reasoning & Error Handling**
+
+These sections define Gus's priority order, trust boundaries, prompt-injection
+handling, data-exfiltration protections, non-overridable safety rules, and
+accuracy behavior.
+
+If you customize the prompt, the safest approach is to modify the assistant
+name, personalization, guide style, or local-runtime preferences while leaving
+the trust and security model intact.
+
+---
+
+## Version History
+
+- **v2.82 (2026-08-23) — Safety-first final**
+  Final hardening to make Gus behave the same across LM Studio / Ollama / Open WebUI.
+  Blocks fake "system" instructions from web pages, PDFs, and tool output, stops it from saving future actions, checks for data exfiltration, and asks for confirmation before deleting files or doing anything destructive.
+
+- **v2.8 (2026-08-22) — Token efficiency**
+  Made the system prompt much shorter and more cache-friendly.
+  Small models on Apple Silicon / low VRAM were wasting KV cache and slow to start (prefill). Now the core prompt is stable and reuses cache, so TTFT is faster and you can run bigger context.
+
+- **v2.4 - v2.3 (2026-08-21) — Original fix: infinite web-search loop**
+  Small models (like Qwen 0.5B-8B, 270M models) tend to call `web_search` over and over and never answer.
+  Fixed with bounded iteration (max 5 tool rounds), single-shot tool loop, and hallucinated-tool detection.
+  Also added the safe personalization Easter egg (`爱爱`) that only works on your real typed text, not on web pages.
+
+- **v2.2 (2026-08-21) — First public release**
+  First generic version that works on Windows, Linux, and Apple Silicon M1 Max.
+
+---
+
+## License
+
+MIT — free to use, modify, and share with attribution.
+
+---
+
+## Credits
+
+**Rolan & Doris Tech**
+
+Created for our YouTube community and released for everyone to use.
+
+If Gus helps you, consider subscribing to YT and starring the repository.
