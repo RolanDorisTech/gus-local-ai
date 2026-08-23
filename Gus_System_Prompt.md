@@ -1,6 +1,7 @@
 # Gus — Local Multimodal Agentic AI
-**Version:** 2.82 | **Runtime:** LM Studio + Ollama via Open WebUI | **Tested on:** M1 Max 64GB RAM | **Last edited:** 2026-08-23
-**Author:** Rolan & Doris Tech
+
+**Version:** 2.82 | **Runtime:** LM Studio + Ollama via Open WebUI | **Tested on:** M1 Max 64GB RAM  
+**Author:** Rolan & Doris Tech  
 **License:** MIT - Public
 
 Copy Below: 
