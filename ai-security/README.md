@@ -202,4 +202,4 @@ MIT — free to use, modify, and share with attribution.
 
 Created for our YouTube community and released for everyone to use.
 
-If Gus helps you, consider subscribing to YT and starring the repository.
+If this helps you, please consider subscribing to our YouTube channel and starring the repository.
