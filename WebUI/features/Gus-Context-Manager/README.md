@@ -162,4 +162,4 @@ MIT — free to use, modify, and share with attribution.
 
 **Rolan & Doris Tech**
 
-Built for our local AI project and released for the community.
+If this helps you, please consider subscribing to our YouTube channel and starring the repository.
