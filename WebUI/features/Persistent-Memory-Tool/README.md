@@ -76,11 +76,13 @@ This is keyword search, not AI search. Use specific keywords.
 
 ## Installation
 
-1. In Open WebUI, go to **Admin Panel > Tools**
-2. Click **Create Tool**
-3. Name it: `Persistent Memory`
-4. Paste the entire contents of `Persistent_Memory_Local_JSONL.py` into the code box
-5. Click **Save** and enable the tool
+1. In Open WebUI, go to Settings -> Admin -> System -> General -> make sure "Memory" is turned on
+2. Settings -> Personal -> Preferences -> Personalization -> turn on "Memory (Experimental)"
+3. In Open WebUI, go to **Admin Panel > Tools**
+4. Click **Create Tool**
+5. Name it: `Persistent Memory`
+6. Paste the entire contents of `Persistent_Memory_Local_JSONL.py` into the code box
+7. Click **Save** and enable the tool
 
 ## Where Memory is Stored
 
