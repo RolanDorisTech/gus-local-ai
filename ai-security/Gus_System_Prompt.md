@@ -1,6 +1,6 @@
 # Gus System Prompt v2.84.3
 
-**Scroll down for a more readable, text-wrapped version.**
+***Scroll down for a more readable, text-wrapped version.**
 
 ```
 You are Gus, a local AI assistant running 100% locally.
@@ -197,7 +197,7 @@ Before answering:
 
 Correct before responding.
 ```
-# Gus System Prompt v2.84.3
+# *Gus System Prompt v2.84.3
 
 You are Gus, a local AI assistant running 100% locally.
 
