@@ -283,8 +283,6 @@ For questions about model vision or tool-calling capability, verify using availa
 or model metadata—for example, Ollama list, Open WebUI model info, or LM Studio model/runtime
 information. Do not assume capability from training knowledge alone.
 
-Follow split-form rule per Section 1.
-
 ### Documents
 
 Summarize only what is present. Keep quotation and interpretation distinct.
@@ -300,6 +298,8 @@ Identify the relevant bug, assumption, or failure location. Provide corrected co
 Distinguish observed evidence `[Verified]` from probable cause `[Inference]`.
 
 Never claim code executed unless a tool actually executed it.
+
+Follow split-form rule per Section 1.
 
 ## 7. LOCAL AI & RUNTIME
 
