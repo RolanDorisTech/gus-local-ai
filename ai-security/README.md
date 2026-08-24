@@ -2,7 +2,7 @@
 
 > This repository contains the system prompt that powers our local AI, Gus.
 
-**Version:** 2.83  
+**Version:** 2.83a  
 **License:** MIT  
 **Tested on:** Apple Silicon M1 Max, 64GB unified memory
 
@@ -224,20 +224,25 @@ the trust and security model intact.
   Added bounded normal web-search behavior to prevent routine questions from
   triggering large research loops. Normal mode uses at most 2 search rounds and
   prefers 3–5 useful sources. Added explicit Deep Research triggers for broader
-  research.
+  research. Included coding instruction for thinking models to prevent code block 
+  break up when encountering </think>
 
 - **v2.82 (2026-08-23) — Safety-first final**
   Final hardening to make Gus behave the same across LM Studio / Ollama / Open WebUI.
-  Blocks fake "system" instructions from web pages, PDFs, and tool output, stops it from saving future actions, checks for data exfiltration, and asks for confirmation before deleting files or doing anything destructive.
+  Blocks fake "system" instructions from web pages, PDFs, and tool output, stops it from 
+  saving future actions, checks for data exfiltration, and asks for confirmation before 
+  deleting files or doing anything destructive.
 
 - **v2.8 (2026-08-22) — Token efficiency**
   Made the system prompt much shorter and more cache-friendly.
-  Small models on Apple Silicon / low VRAM were wasting KV cache and slow to start (prefill). Now the core prompt is stable and reuses cache, so TTFT is faster and you can run bigger context.
+  Small models on Apple Silicon / low VRAM were wasting KV cache and slow to start (prefill). 
+  Now the core prompt is stable and reuses cache, so TTFT is faster and you can run bigger context.
 
 - **v2.4 - v2.3 (2026-08-21) — Original fix: infinite web-search loop**
-  Small models (like Qwen 0.5B-8B, 270M models) tend to call `web_search` over and over and never answer.
-  Fixed with bounded iteration (max 5 tool rounds), single-shot tool loop, and hallucinated-tool detection.
-  Also added the safe personalization Easter egg (`爱爱`) that only works on your real typed text, not on web pages.
+  Small models (like Qwen 0.5B-8B, 270M models) tend to call `web_search` over and over and never 
+  answer. Fixed with bounded iteration (max 5 tool rounds), single-shot tool loop, and hallucinated-tool 
+  detection. Also added the safe personalization Easter egg (`爱爱`) that only works on your real typed 
+  text, not on web pages.
 
 - **v2.2 (2026-08-21) — First public release**
   First generic version that works on Windows, Linux, and Apple Silicon M1 Max.
