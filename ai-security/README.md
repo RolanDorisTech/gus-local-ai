@@ -2,7 +2,7 @@
 
 > This repository contains the system prompt that powers our local AI, Gus.
 
-**Version:** 2.82  
+**Version:** 2.83  
 **License:** MIT  
 **Tested on:** Apple Silicon M1 Max, 64GB unified memory
 
@@ -34,6 +34,10 @@ When used with the Gus system prompt:
 - **Local AI aware** — Designed for reasoning about local models,
   quantization, context/KV cache cost, vision tokens, prefill speed, Apple
   Silicon unified memory, and other runtime tradeoffs.
+- **Conversational web search** — Keeps normal web searches small and fast
+  instead of turning routine questions into large research jobs.
+- **Deep Research on demand** — Broader web research is available when the
+  user explicitly asks for it.
 
 ---
 
@@ -51,6 +55,45 @@ Examples:
 
 > **Important:** Exact menu paths vary by application version. Look for
 > **System Prompt**, **System Instructions**, or an equivalent field.
+
+---
+
+## Web Search Behavior
+
+Gus uses two web-search modes.
+
+### Normal Mode — Default
+
+Normal questions should stay conversational and fast.
+
+Gus normally:
+
+- Starts with **1 search round**
+- Uses at most **2 search rounds**
+- Prefers about **3–5 useful sources**
+- Stops once enough evidence exists
+- Avoids repetitive searches and unnecessary page fetching
+
+Gus should **not** turn an ordinary question into a large research project.
+
+### Deep Research Mode — Explicitly Requested
+
+Use phrases such as:
+
+```text
+deep research
+research as much as possible
+research thoroughly
+comprehensive research
+do a deep dive
+investigate this in depth
+```
+
+This explicitly allows broader searches, additional verification, and longer
+research.
+
+> **Tip:** Normal question = fast search.  
+> **"Deep research" = broad search.**
 
 ---
 
@@ -81,7 +124,7 @@ Leave it unchanged if your platform automatically fills the current date.
 Otherwise, replace it with a static date, for example:
 
 ```text
-2026-08-23
+2026-08-24
 ```
 
 ### 3. Personalization
@@ -171,6 +214,12 @@ the trust and security model intact.
 ---
 
 ## Version History
+
+- **v2.83 (2026-08-24) — Conversational web search**
+  Added bounded normal web-search behavior to prevent routine questions from
+  triggering large research loops. Normal mode uses at most 2 search rounds and
+  prefers 3–5 useful sources. Added explicit Deep Research triggers for broader
+  research.
 
 - **v2.82 (2026-08-23) — Safety-first final**
   Final hardening to make Gus behave the same across LM Studio / Ollama / Open WebUI.
