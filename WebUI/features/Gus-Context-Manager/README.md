@@ -2,15 +2,17 @@
 
 > Lightweight context management, selective file retrieval, and prompt-injection defense for Open WebUI.
 
-**Version:** 7.92a  
+**Version:** 7.93.01b Unified  
 **License:** MIT  
 **Author:** Rolan & Doris Tech
+
+One compactor file for all models. Fail-safe 8K default, explicit 16K overrides.
 
 ---
 
 ## Quick Setup
 
-### 1. Start the compactor
+### 1. Start compactor (4B, fast on M1 Max)
 
 ```bash
 source ~/mlx-env/bin/activate
@@ -21,145 +23,141 @@ python3 -m mlx_vlm.server \
     --port 8081
 ```
 
-If you do not use an external drive, remove or change the `HF_HOME` line.
+Remove `HF_HOME` if you don't use an external drive.
 
-### 2. Download the sanitizer
+### 2. Pull sanitizer
 
 ```bash
 ollama pull qwen3.5:2b-mlx
 ```
 
-### 3. Create the filter
+### 3. Install filter
 
-In Open WebUI:
+Open WebUI: **Admin Panel → Functions → +**
 
-**Admin Panel → Functions → +**
+Paste `Gus_Context_Manager_v7.93.01_unified.py` and enable.
 
-Paste the complete contents of:
-
-```text
-Gus_Context_Manager_v7.92_Predictive_Intent.py
-```
-
-Then enable the filter.
-
-### 4. Done
-
-The default settings are already configured for the recommended local models below. You normally do not need to change anything.
+Done. Defaults work for the models below.
 
 ---
 
 ## Recommended Models
 
-| Role | Model | Endpoint |
-|---|---|---|
-| Main AI | Your preferred chat model | Open WebUI |
-| Compactor | `mlx-community/Qwen3.5-4B-4bit` | `http://127.0.0.1:8081/v1/chat/completions` |
-| Sanitizer | `qwen3.5:2b-mlx` | `http://127.0.0.1:11434/api/chat` |
+| Role | Model | Endpoint | Ctx |
+|---|---|---|---|
+| Main | Ornith 35b-a3b-mlx / Gemma 31b / Qwen 27b | Your LM Studio / Ollama | 16384 |
+| Main small | qwen3.5:2b / llama3.3:70b | Ollama | 8192 |
+| Compactor | `mlx-community/Qwen3.5-4B-4bit` | `http://127.0.0.1:8081/v1/chat/completions` | 8192 |
+| Sanitizer | `qwen3.5:2b-mlx` | `http://127.0.0.1:11434/api/chat` | 4096 |
 
-Your main AI model remains separate. The two small helper models only handle background context compaction and suspicious web content.
+Main model stays separate. Helper models only do background compaction and web sanitization.
 
 ---
 
 ## What It Does
 
-Gus Context Manager keeps long conversations smooth and efficient by:
-
-- Reducing unnecessary historical context
-- Compacting older conversation history in the background
-- Preserving important decisions and conclusions
-- Removing historical images and large raw payloads
-- Retrieving file content only when the user asks for it
-- Supporting short file follow-up questions
-- Checking suspicious web/search content for prompt injection
-- Cancelling stale background compaction jobs
-
-The goal is simple: **keep the main model focused on useful context without unnecessary prompt growth, slowdown, truncation, or forgetting.**
+- Keeps main model focused, no prompt bloat
+- Strips historical images, file context, and large web payloads
+- Compacts old history async, preserves decisions and facts
+- Retrieves files only on explicit intent
+- Supports follow-ups like `what about the second section?`
+- Checks suspicious web/tool content for injections
+- Cancels stale background jobs
 
 ---
 
 ## How It Works
 
-### Normal Conversation
+### Normal chat
+Almost no-op. Lightweight CPU only.
 
-For ordinary conversation, the filter does almost nothing. It uses lightweight CPU operations and adds minimal latency.
+### Long chat (3-stage, model-aware)
 
-### Long Conversations
+Pressure = `estimated_tokens / effective_ctx`
 
-As the conversation grows, older history can be compacted in the background:
+* **50%** - prepare (wait for idle 6s)
+* **65%** - eager (wait 1.5s)
+* **85%** - immediate
 
-- **60%** — prepare for compaction
-- **75%** — eager compaction
-- **90%** — immediate compaction
+Example: 8K model compacts at ~4096 tokens, 16K model at ~8192.
 
-The summary preserves important facts, decisions, preferences, settings, constraints, and unresolved issues.
+Summary replaces first 60% of history, keeps last 40% raw. Old summary is never re-summarized.
+
+### Architecture (v7.93.01)
+
+```
+current model -> effective_ctx -> file budget -> estimate -> pressure -> async compaction
+```
+
+* Unknown models default to 8192 (fail-safe, not 16384)
+* Case-insensitive match: `MLX-COMMUNITY/Qwen3.5-4B-4bit` matches `qwen3.5-4b`
+* File retrieval budget uses current turn's ctx, not previous turn's stale value
 
 ### Files
 
-File content is retrieved only when clearly needed, for example:
+Triggers on:
 
-```text
-Read the PDF.
-What does the document say?
-Check page 4.
-According to the report...
-What about the second section?
+```
+Read the PDF / Check page 4 / According to the report / What does the document say?
 ```
 
-Relevant file content is temporary and is removed from later history unless retrieved again.
+* `top_k=3`, cached, dynamically budgeted against current ctx
+* Injected context is temporary, removed from next turns unless re-requested
+* Full-file intent (`full file`, `entire file`) capped at 8000 chars
 
 ### Web Safety
 
-Suspicious web, search, or tool content is checked for possible prompt injection.
-
-Normal user messages are not sent through the sanitizer.
+* Only last web payload is sanitized, not entire history
+* Capped at 4000 chars, `keep_alive=5m` (not permanent)
+* Normal user messages bypass sanitizer
 
 ---
 
-## Changing Models
+## Valves You May Change
 
-You normally do not need to edit the code.
+In filter Valves UI:
 
-Open the filter's **Valves** and change:
+```
+context_window: 8192 (conservative default, overridden per model)
+prepare_ratio: 0.50
+use_ratio: 0.65
+emergency_ratio: 0.85
 
-```text
-compactor_url
-compactor_model
-compactor_format
+compactor_url, compactor_model, compactor_format
+sanitizer_url, sanitizer_model, sanitizer_format
 
-sanitizer_url
-sanitizer_model
-sanitizer_format
+file_top_k: 3
+file_max_injected_chars: 6000
+web_payload_keep_chars: 600
 ```
 
-The defaults are:
+No code edit needed for model changes.
 
-```text
-Compactor:
-URL:    http://127.0.0.1:8081/v1/chat/completions
-Model:  mlx-community/Qwen3.5-4B-4bit
-Format: openai
+---
 
-Sanitizer:
-URL:    http://127.0.0.1:11434/api/chat
-Model:  qwen3.5:2b-mlx
-Format: ollama
-```
+## Changelog v7.92a → v7.93.01b
+
+1. One file for all models, dynamic ctx detection
+2. Default 8192 fail-safe, explicit 16K map (`ornith`, `gemma-4-31b`, `qwen3.5-4b` etc)
+3. `_make_text_snapshot` and `_build_compaction_conversation` both skip `[Compressed historical context]`
+4. Sanitizer only scans newest web payload, 5m keep-alive
+5. `effective_ctx` passed directly to file retrieval (fixes stale ctx on model switch)
+6. Removed unused `MODEL_CTX_MAP_16K`, fixed `key.lower() in low` match
+7. Token estimate `chars/3.5` not `/4`, `compactor_max_tokens=512`
 
 ---
 
 ## Notes
 
-- Designed primarily for local Open WebUI installations.
-- Runs entirely with local helper models.
-- The file retrieval endpoint may need adjustment if your Open WebUI version uses a different internal API.
-- The recommended helper models are intentionally small to minimize impact on the main chat model.
+* Local Open WebUI only. Runs fully local.
+* File retrieval URL may differ on newer Open WebUI versions. Adjust `retrieval_url` valve if needed.
+* For M1 Max 64GB: Ornith 16K ~27GB total, Qwen2b 4K ~2GB. Keep both keep-alive.
 
 ---
 
 ## License
 
-MIT — free to use, modify, and share with attribution.
+MIT
 
 ---
 
@@ -167,4 +165,4 @@ MIT — free to use, modify, and share with attribution.
 
 **Rolan & Doris Tech**
 
-If this helps you, please consider subscribing to our YouTube channel and starring the repository.
+If this helps, please subscribe on YouTube and star the repo.
