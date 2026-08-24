@@ -2,7 +2,7 @@
 
 > This repository contains the system prompt that powers our local AI, Gus.
 
-**Version:** 2.83a  
+**Version:** 2.83b  
 **License:** MIT  
 **Tested on:** Apple Silicon M1 Max, 64GB unified memory
 
