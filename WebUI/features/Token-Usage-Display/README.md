@@ -1,8 +1,8 @@
 # Token Usage Display
 
-> Displays per-response and cumulative token usage in Open WebUI.
+> Displays per-response and cumulative token usage in Open WebUI — real LM Studio usage + persistent Σ.
 
-**Version:** 2.3  
+**Version:** 2.4.05 DEBUG FIX  
 **License:** MIT  
 **Author:** Rolan & Doris Tech
 
@@ -10,80 +10,52 @@
 
 ## What It Does
 
-`Token_Usage_Display.py` shows:
-
-- Prompt tokens
-- Response tokens
-- Total tokens
-- Prompt and response word counts
-- Generation speed
-- Total response time
-- Cumulative usage for the current chat
-
-Cumulative totals are kept in memory and are designed to continue working through chat compaction.
-
-The display puts cumulative usage first for easier viewing on mobile.
-
----
+- Uses real `prompt_tokens` / `completion_tokens` from LM Studio, Ollama, OpenAI when available
+- Falls back to text estimate (`\w+|[^\w\s] * 1.3`) + word count
+- Shows t/s generation speed and total elapsed
+- Keeps persistent cumulative ΣP / ΣR / Σ per chat_id (500 chats LRU)
+- Stable turn dedup via md5(prompt) or message_id — survives compaction / regen
+- Strips `<think>` and `<reasoning>` blocks from count
 
 ## Installation
 
-1. In Open WebUI, create a new **Filter**.
-2. Name it:
+1. Open WebUI > Admin > Functions > Filters > New Filter
+2. Name: `Token Usage Display`
+3. Paste full `Token_Usage_Display.py` V2.4.05
+4. Save > Toggle OFF then ON > Restart Open WebUI container > Start **New Chat**
 
-   `Token Usage Display`
-
-3. Paste in the complete contents of:
-
-   `Token_Usage_Display.py`
-
-4. Enable the filter.
-
-No additional Python packages are required beyond the dependencies normally available in Open WebUI.
-
----
+No extra packages required.
 
 ## How It Works
 
-The filter requests streaming usage data when available.
+- **inlet(body, user, metadata):** sets `_token_start`, `_token_first`, forces `stream_options.include_usage=True`
+- **stream(event, user, metadata):** captures first output token time, captures final `usage` from stream
+- **outlet(body, user, metadata, __event_emitter__):** prefers stream usage, else `message.usage`, else estimate; builds status line and emits via `__event_emitter__`
+- Compatibility: accepts both `metadata` and `__metadata__`, `user` and `__user__`, `__event_emitter__`
 
-If LM Studio provides token usage, those values are used.
+## Display Format
 
-If usage data is unavailable, the filter estimates tokens from text.
+    🚀22.8t/s(1.2s) 🪟Σ15.6k(11900w) 👇P1.2k·900w|R420·320w 📈ΣP12.4k·9500w|ΣR3.2k·2400w
 
-At the end of each response, it displays a status line similar to:
-
-```text
-📈 ΣP12.4k(9500w) ΣR3.2k(2400w) Σ15.6k(11900w) |
-📊 P1.2k(900w) R420(320w) 18.4s 22.8t/s
-```
-
-### Display Labels
-
-- `ΣP` — Cumulative prompt tokens
-- `ΣR` — Cumulative response tokens
-- `Σ` — Cumulative total tokens
-- `P` — Current prompt tokens
-- `R` — Current response tokens
-- `w` — Word count
-- `t/s` — Estimated response generation speed
-
----
+- `🚀 t/s(s)` — generation speed + total time
+- `🪟Σ` — chat total tokens (words)
+- `👇 P·w|R·w` — current turn
+- `📈 ΣP·w|ΣR·w` — cumulative
 
 ## Notes
 
-- Token values are most accurate when the backend provides usage data.
-- The fallback token estimate is approximate.
-- Cumulative totals are stored in memory and reset when the Open WebUI process restarts.
-- The filter does not modify the conversation content.
+- Most accurate when backend provides usage
+- Cumulative is in-memory, resets on OWUI restart
+- Does not modify conversation content
+- Fixed: real `__init__` dunders, split `</think>` to avoid template bug, stable `metadata` param name
 
----
+## Troubleshooting
+
+If line doesn't show: use New Chat (old chats cache old filter), check filter ON, `docker logs open-webui | grep TokenFilter` — should show `has_emitter=True` and `has_meta=True`. Test with plain model, not QwenDaily tool assistant.
 
 ## License
 
-MIT — free to use, modify, and share with attribution.
-
----
+MIT — free to use, modify, share with attribution.
 
 ## Credits
 
