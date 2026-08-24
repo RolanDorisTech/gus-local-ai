@@ -938,8 +938,8 @@ class Filter:
         )
 
         full_file_max_injected_chars: int = Field(
-            default=30000,
-            description="Default cap for full-file injection (~7500 tokens). Actual size is dynamically bounded by remaining context window budget",
+            default=15000,
+            description="Default cap for full-file injection (~3750 tokens). Dynamically bounded + hard guard at 70% window to avoid EOF on :51352",
         )
 
         full_file_metadata_url: str = Field(
@@ -1596,17 +1596,30 @@ class Filter:
         if is_full_request:
             k_to_use = self.valves.full_file_top_k
             estimated_tokens = _estimate_tokens_fast(messages)
+            # Hard guard: if prompt already >70% of window, don't inject full file - it will crash main model on :51352
+            if estimated_tokens > self.valves.context_window * 0.7:
+                print(
+                    f"Gus 7.85 full-file skipped: prompt already {estimated_tokens} tokens "
+                    f">70% of {self.valves.context_window} window - use summarize or ask specific"
+                )
+                return True  # Skip injection to avoid EOF crash
             remaining_tokens = max(
                 1000,
                 self.valves.context_window - estimated_tokens - 2000,
             )
-            dynamic_budget_chars = int(remaining_tokens * 4 * 0.6)
+            # Use more conservative 40% when context already >50% full
+            ratio = 0.4 if estimated_tokens > self.valves.context_window * 0.5 else 0.6
+            dynamic_budget_chars = int(remaining_tokens * 4 * ratio)
             max_chars = min(
                 self.valves.full_file_max_injected_chars,
                 dynamic_budget_chars,
             )
             max_chars = max(2000, max_chars)
             cache_suffix = "|FULL"
+            print(
+                f"Gus 7.85 full-file budget: estimated={estimated_tokens}, "
+                f"remaining={remaining_tokens}, ratio={ratio}, max_chars={max_chars}"
+            )
         else:
             k_to_use = self.valves.file_top_k
             max_chars = self.valves.file_max_injected_chars
