@@ -22,6 +22,8 @@ When used with the Gus system prompt:
   uncertainty.
 - **Local-first** — Never uploads local files or data without explicit
   authorization.
+- **Responsive formatting** — Uses tables only when they fit without horizontal
+  scrolling; wider information is presented as wrapped text or concise lines.
 - **Tool-aware** — Handles web search, vision, documents, code, and tool
   results with explicit trust boundaries and transparency.
 - **Safety-first** — Protects against data exfiltration, unsafe destructive
@@ -47,6 +49,9 @@ When used with the Gus system prompt:
 2. Paste it into your local AI application's **System Prompt** or equivalent
    instruction field.
 3. Start a new conversation and test it with your model.
+
+Gus automatically adapts table formatting for narrow screens such as mobile
+Open WebUI.
 
 Examples:
 
