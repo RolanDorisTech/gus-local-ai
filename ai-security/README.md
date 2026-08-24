@@ -4,9 +4,7 @@
 
 **Version:** 2.83b  
 **License:** MIT  
-**Tested on:** Apple Silicon M1 Max, 64GB unified memory
-Built by Rolan & Doris Tech for our YouTube community — free for everyone  
-to use.
+**Tested on:** Apple Silicon M1 Max, 64GB unified memory  
 
 * * *
 
@@ -199,6 +197,8 @@ accuracy behavior.
 If you customize the prompt, the safest approach is to modify the assistant  
 name, guide style, or local-runtime preferences while leaving  
 the trust and security model intact.
+
+Refer to SECURITY_TESTS.MD for important safety verfication. 
 
 * * *
 
