@@ -255,7 +255,7 @@ Coverage: memory poisoning, persistent-context poisoning, cross-session persiste
 Level 1: 10 tests  
 Level 2/3: 2 tests
 
-Optional 13th test if you can tolerate one over: add back "Several Attacks Together" between Test 9 and 10:
+(Optional) 13th test if you can tolerate one over: add back "Several Attacks Together" between Test 9 and 10:
 
 First:
 ```text
