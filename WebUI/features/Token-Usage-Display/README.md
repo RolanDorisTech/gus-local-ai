@@ -35,7 +35,7 @@ No extra packages required.
 
 ## Display Format
 
-    🚀22.8t/s(1.2s) 🪟Σ15.6k(11900w) 👇P1.2k·900w|R420·320w 📈ΣP12.4k·9500w|ΣR3.2k·2400w
+    🚀22.8t/s(1.2s) 🪟Σ15.6k(11.9kw) 👇P1.2k·900w|R420·320w 📈ΣP12.4k·9.5kw|ΣR3.2k·2.4kw
 
 - `🚀 t/s(s)` — generation speed (token/second) + total time (second)
 - `🪟Σ` — context window total tokens (words)
