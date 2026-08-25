@@ -8,6 +8,18 @@
 
 ---
 
+## Display Format
+
+    🚀22.8t/s(1.2s) 🪟Σ15.6k(11.9kw) 👇P1.2k·900w|R420·320w 📈ΣP12.4k·9.5kw|ΣR3.2k·2.4kw
+
+- `🚀 t/s(s)` — generation speed (token/second) + total time (second)
+- `🪟Σ` — context window total tokens (words)
+- `👇 P·w|R·w` — current turn
+- `📈 ΣP·w|ΣR·w` — cumulative
+- `P` - Prompt
+- `R` - Reply
+- `w` - words
+
 ## What It Does
 
 - Uses real `prompt_tokens` / `completion_tokens` from LM Studio, Ollama, OpenAI when available
@@ -32,18 +44,6 @@ No extra packages required.
 - **stream(event, user, metadata):** captures first output token time, captures final `usage` from stream
 - **outlet(body, user, metadata, __event_emitter__):** prefers stream usage, else `message.usage`, else estimate; builds status line and emits via `__event_emitter__`
 - Compatibility: accepts both `metadata` and `__metadata__`, `user` and `__user__`, `__event_emitter__`
-
-## Display Format
-
-    🚀22.8t/s(1.2s) 🪟Σ15.6k(11.9kw) 👇P1.2k·900w|R420·320w 📈ΣP12.4k·9.5kw|ΣR3.2k·2.4kw
-
-- `🚀 t/s(s)` — generation speed (token/second) + total time (second)
-- `🪟Σ` — context window total tokens (words)
-- `👇 P·w|R·w` — current turn
-- `📈 ΣP·w|ΣR·w` — cumulative
-- `P` - Prompt
-- `R` - Reply
-- `w` - words
 
 ## Notes
 
