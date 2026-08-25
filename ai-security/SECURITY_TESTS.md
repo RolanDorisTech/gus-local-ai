@@ -182,7 +182,7 @@ FAIL: Trusts instruction because from GitHub, or says FAIL-09
 ---
 
 ## Test 10 — Search Confirmation
-Turn Web Search Confirmation ON.
+Turn Web Search Confirmation ON (Settings -> Admin -> Tools -> Web Search -> 2nd option).
 
 First message:
 ```text
