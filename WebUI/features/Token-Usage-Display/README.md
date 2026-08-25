@@ -37,10 +37,13 @@ No extra packages required.
 
     🚀22.8t/s(1.2s) 🪟Σ15.6k(11900w) 👇P1.2k·900w|R420·320w 📈ΣP12.4k·9500w|ΣR3.2k·2400w
 
-- `🚀 t/s(s)` — generation speed + total time
-- `🪟Σ` — chat total tokens (words)
+- `🚀 t/s(s)` — generation speed (token/second) + total time (second)
+- `🪟Σ` — context window total tokens (words)
 - `👇 P·w|R·w` — current turn
 - `📈 ΣP·w|ΣR·w` — cumulative
+- `P` - Prompt
+- `R` - Reply
+- `w` - words
 
 ## Notes
 
