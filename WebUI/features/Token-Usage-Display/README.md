@@ -19,6 +19,7 @@
 - `P` - Prompt
 - `R` - Reply
 - `w` - words
+- -`k` for thousand `M` for million
 
 ## What It Does
 
