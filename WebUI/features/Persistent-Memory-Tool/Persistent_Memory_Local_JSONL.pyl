@@ -1,8 +1,8 @@
 """
 title: Persistent Memory - Local JSONL
 author: Rolan & Doris Tech
-version: 2.0
-description: Lightweight persistent JSONL memory for Open WebUI. Stores concise user facts and project preferences locally and survives restarts.
+version: 2.0.01 Personal
+description: Persistent local JSONL memory for hardware specs, project decisions, and user preferences. Optimized for local Open WebUI installations.
 """
 
 import json
@@ -11,7 +11,7 @@ import re
 import threading
 import uuid
 from datetime import datetime
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 from pydantic import BaseModel, Field
 
@@ -20,39 +20,38 @@ class Tools:
     """
     Persistent local memory using a JSONL file.
 
-    This tool is intentionally simple and lightweight:
-    - No database required
-    - No embeddings required
-    - No external services
+    Personal configuration:
+    - Primary storage on RocketQQ SSD
+    - Automatic fallback for Docker/container environments
+    - No cloud services
+    - No embeddings or vector database required
     - Memory survives restarts
-    - Keyword-based retrieval
+    - Lightweight keyword-based retrieval
     """
 
     class Valves(BaseModel):
         memory_file: str = Field(
-            default="/app/backend/data/persistent-memory/memory.jsonl",
-            description=(
-                "Primary JSONL memory file path. Change this if you want "
-                "to store memory elsewhere."
-            ),
+            default="/Volumes/RocketQQ/open-webui-data/qwen-memory/memory.jsonl",
+            description="Primary host path on Mac / RocketQQ SSD.",
+        )
+
+        fallback_file: str = Field(
+            default="/app/backend/data/qwen-memory/memory.jsonl",
+            description="Fallback path inside Docker or container environments.",
         )
 
         max_results: int = Field(
             default=5,
             ge=1,
             le=20,
-            description=(
-                "Maximum number of matching memories returned per search."
-            ),
+            description="Maximum number of matching memories returned per search.",
         )
 
         max_memory_length: int = Field(
             default=2000,
             ge=100,
             le=10000,
-            description=(
-                "Maximum character length for a single stored memory."
-            ),
+            description="Maximum character length for a single stored memory.",
         )
 
         enable_duplicate_check: bool = Field(
@@ -63,16 +62,24 @@ class Tools:
     def __init__(self):
         self.valves = self.Valves()
 
-        # RLock is required because update_memory() can call _load()
+        # RLock allows update_memory() to safely call _load()
         # while already holding the same lock.
         self._lock = threading.RLock()
 
-        self._memory_file = os.path.expanduser(
-            os.path.expandvars(self.valves.memory_file)
-        )
+        # Use RocketQQ SSD when available.
+        # Otherwise use the configured fallback path.
+        if os.path.exists("/Volumes/RocketQQ"):
+            self._memory_file = os.path.expanduser(
+                os.path.expandvars(self.valves.memory_file)
+            )
+        else:
+            self._memory_file = os.path.expanduser(
+                os.path.expandvars(self.valves.fallback_file)
+            )
 
         try:
             self._ensure_memory_file()
+
         except Exception as e:
             print(f"Persistent Memory initialization error: {e}")
 
@@ -121,8 +128,8 @@ class Tools:
                                 memories.append(entry)
 
                         except json.JSONDecodeError:
-                            # Skip malformed lines instead of failing the
-                            # entire memory store.
+                            # Ignore malformed JSONL lines instead of
+                            # failing the entire memory store.
                             continue
 
         except Exception as e:
@@ -134,8 +141,13 @@ class Tools:
         """
         Normalize and tokenize text for lightweight keyword matching.
 
-        Supports normal alphanumeric words as well as Chinese,
-        Japanese, and Korean text.
+        Supports:
+        - English
+        - Numbers
+        - Hyphenated technical terms
+        - Chinese
+        - Japanese
+        - Korean
         """
 
         text = text.lower().strip()
@@ -153,16 +165,15 @@ class Tools:
         query: str,
         memory: Dict[str, Any],
     ) -> int:
-        """Return a simple relevance score for one memory entry."""
+        """
+        Calculate a simple keyword relevance score.
 
-        content = str(
-            memory.get("content", "")
-        ).lower()
+        This is intentionally lightweight and does not require
+        embeddings or a vector database.
+        """
 
-        path = str(
-            memory.get("path", "")
-        ).lower()
-
+        content = str(memory.get("content", "")).lower()
+        path = str(memory.get("path", "")).lower()
         searchable = f"{path} {content}"
 
         query_normalized = query.lower().strip()
@@ -172,15 +183,14 @@ class Tools:
 
         score = 0
 
-        # Strong score for the complete query appearing directly.
+        # Strong match for the complete query.
         if query_normalized in searchable:
             score += 10
 
         query_tokens = self._tokenize(query_normalized)
 
         for token in query_tokens:
-
-            # Category/path matches are weighted more strongly.
+            # Category/path matches are slightly more important.
             if token in path:
                 score += 4
 
@@ -194,9 +204,9 @@ class Tools:
         query: str = Field(
             ...,
             description=(
-                "What to search for in persistent memory. Use concise "
-                "keywords such as a hardware model, project name, "
-                "preference, or topic."
+                "Search persistent memory using concise keywords. "
+                "Examples: hardware model, project name, previous "
+                "decision, user preference, or saved fact."
             ),
         ),
     ) -> str:
@@ -226,16 +236,13 @@ class Tools:
         scored = []
 
         for memory in memories:
-
             score = self._score_memory(
                 query,
                 memory,
             )
 
             if score > 0:
-                scored.append(
-                    (score, memory)
-                )
+                scored.append((score, memory))
 
         # Higher relevance first.
         # For equal relevance, newer memories first.
@@ -247,12 +254,7 @@ class Tools:
             reverse=True,
         )
 
-        hits = [
-            memory
-            for _, memory in scored[
-                :self.valves.max_results
-            ]
-        ]
+        hits = [memory for _, memory in scored[: self.valves.max_results]]
 
         if not hits:
             return (
@@ -263,10 +265,7 @@ class Tools:
         lines = []
 
         for memory in hits:
-
-            timestamp = str(
-                memory.get("timestamp", "")
-            )[:19]
+            timestamp = str(memory.get("timestamp", ""))[:19]
 
             path = str(
                 memory.get(
@@ -275,19 +274,15 @@ class Tools:
                 )
             )
 
-            content = str(
-                memory.get("content", "")
-            )
+            content = str(memory.get("content", ""))
 
-            lines.append(
-                f"[{timestamp}] [{path}] {content}"
-            )
+            lines.append(f"[{timestamp}] [{path}] {content}")
 
         return (
             "Relevant persistent memories found:\n"
             + "\n".join(lines)
             + "\n\nUse these memories when relevant. "
-              "Do not repeatedly search for the same information."
+            "Do not repeatedly search for the same information."
         )
 
     def update_memory(
@@ -295,23 +290,30 @@ class Tools:
         content: str = Field(
             ...,
             description=(
-                "Concise fact, preference, decision, or project detail "
-                "to remember."
+                "Save only durable user-specific facts, preferences, "
+                "decisions, or project configuration explicitly requested "
+                "for future memory. Never save code, READMEs, documents, "
+                "drafts, ordinary answers, or temporary task content."
             ),
         ),
         path: str = Field(
             ...,
             description=(
-                "Short category path such as 'hardware/M1Max', "
-                "'project/MyProject', or 'preferences/response-style'."
+                "Short category path such as "
+                "'hardware/M1Max', "
+                "'project/Gus', or "
+                "'preferences/response-style'."
             ),
         ),
     ) -> str:
         """
-        Save a concise fact to persistent local memory.
+        Save a durable user-specific fact to persistent local memory.
 
-        Use only when the user explicitly asks to remember, save, store,
+        Use ONLY when the user explicitly asks to remember, save, store,
         or retain information for future conversations.
+
+        Never use for code, READMEs, documents, drafts, ordinary task
+        output, or temporary context.
         """
 
         content = content.strip()
@@ -334,29 +336,19 @@ class Tools:
             self._ensure_memory_file()
 
         except Exception as e:
-            return (
-                f"ERROR: Cannot create memory directory: {e}"
-            )
+            return f"ERROR: Cannot create memory directory: {e}"
 
         with self._lock:
 
             if self.valves.enable_duplicate_check:
-
                 memories = self._load()
 
                 normalized_content = content.lower()
 
                 for memory in memories:
+                    existing_content = str(memory.get("content", "")).strip().lower()
 
-                    existing_content = str(
-                        memory.get("content", "")
-                    ).strip().lower()
-
-                    if (
-                        existing_content
-                        == normalized_content
-                    ):
-
+                    if existing_content == normalized_content:
                         existing_path = memory.get(
                             "path",
                             "uncategorized",
@@ -393,14 +385,9 @@ class Tools:
                     file.flush()
 
             except Exception as e:
-                return (
-                    f"ERROR: Could not save memory: {e}"
-                )
+                return f"ERROR: Could not save memory: {e}"
 
-        return (
-            f"Saved persistent memory: "
-            f"[{path}] {content}"
-        )
+        return f"Saved persistent memory: [{path}] {content}"
 
     def list_recent_memories(
         self,
@@ -408,23 +395,20 @@ class Tools:
             default=10,
             ge=1,
             le=50,
-            description=(
-                "Maximum number of recent memories to return."
-            ),
+            description="Maximum number of recent memories to return.",
         ),
     ) -> str:
         """
         List the most recently saved memories.
 
-        Useful when the user asks what is currently stored in memory.
+        Use when the user asks what is currently stored in
+        persistent memory.
         """
 
         memories = self._load()
 
         if not memories:
-            return (
-                "No memories are currently stored."
-            )
+            return "No memories are currently stored."
 
         memories.sort(
             key=lambda memory: memory.get(
@@ -437,10 +421,7 @@ class Tools:
         lines = []
 
         for memory in memories[:limit]:
-
-            timestamp = str(
-                memory.get("timestamp", "")
-            )[:19]
+            timestamp = str(memory.get("timestamp", ""))[:19]
 
             path = str(
                 memory.get(
@@ -449,15 +430,8 @@ class Tools:
                 )
             )
 
-            content = str(
-                memory.get("content", "")
-            )
+            content = str(memory.get("content", ""))
 
-            lines.append(
-                f"[{timestamp}] [{path}] {content}"
-            )
+            lines.append(f"[{timestamp}] [{path}] {content}")
 
-        return (
-            "Most recent persistent memories:\n"
-            + "\n".join(lines)
-        )
+        return "Most recent persistent memories:\n" + "\n".join(lines)
