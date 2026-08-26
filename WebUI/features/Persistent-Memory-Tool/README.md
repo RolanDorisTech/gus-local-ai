@@ -2,7 +2,7 @@
 
 > Give your Open WebUI assistant memory that survives restarts. No database, no embeddings, no external services.
 
-**Version:** 2.0  
+**Version:** 2.0.01  
 **License:** MIT  
 **Author:** Rolan & Doris Tech
 
