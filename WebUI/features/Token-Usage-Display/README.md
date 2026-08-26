@@ -2,24 +2,27 @@
 
 > Displays per-response and cumulative token usage in Open WebUI — real LM Studio usage + persistent Σ.
 
-**Version:** 2.4.05 DEBUG FIX  
-**License:** MIT  
+**Version:** 2.4.06 TIME FORMAT FIX
+**License:** MIT
 **Author:** Rolan & Doris Tech
 
 ---
 
 ## Display Format
 
-    🚀22.8t/s(1.2s) 🪟Σ15.6k(11.9kw) 👇P1.2k·900w|R420·320w 📈ΣP12.4k·9.5kw|ΣR3.2k·2.4kw
+🚀22.8t/s(1.2s) 🪟Σ15.6k(11.9kw) 👇P1.2k·900w|R420·320w 📈ΣP12.4k·9.5kw|ΣR3.2k·2.4kw
 
-- `🚀 t/s(s)` — generation speed (token/second) + total time (second)
+- `🚀 t/s(s)` — generation speed (tokens/second) + total time
+  - under 60 seconds: decimal seconds, e.g. `18.3s`
+  - 1 to 59 minutes: `MM:SS`
+  - 1 hour or more: `H:MM:SS`, e.g. `1:02:05`
 - `🪟Σ` — context window total tokens (words)
 - `👇 P·w|R·w` — current turn
 - `📈 ΣP·w|ΣR·w` — cumulative
 - `P` - Prompt
 - `R` - Reply
 - `w` - words
-- -`k` for thousand `M` for million
+- `k` for thousand `M` for million
 
 ## What It Does
 
@@ -28,13 +31,13 @@
 - Shows t/s generation speed and total elapsed
 - Keeps persistent cumulative ΣP / ΣR / Σ per chat_id (500 chats LRU)
 - Stable turn dedup via md5(prompt) or message_id — survives compaction / regen
-- Strips `<think>` and `<reasoning>` blocks from count
+- Strips `think` and `reasoning` blocks from count
 
 ## Installation
 
 1. Open WebUI > Admin > Functions > Filters > New Filter
 2. Name: `Token Usage Display`
-3. Paste full `Token_Usage_Display.py` V2.4.05
+3. Paste full `Token_Usage_Display.py` V2.4.06
 4. Save > Toggle OFF then ON > Restart Open WebUI container > Start **New Chat**
 
 No extra packages required.
@@ -51,7 +54,7 @@ No extra packages required.
 - Most accurate when backend provides usage
 - Cumulative is in-memory, resets on OWUI restart
 - Does not modify conversation content
-- Fixed: real `__init__` dunders, split `</think>` to avoid template bug, stable `metadata` param name
+- Fixed: real `__init__` dunders, split `think` close tag to avoid template bug, stable `metadata` param name, and time formatting now shows decimal seconds under 60s and `H:MM:SS` for 1 hour or more
 
 ## Troubleshooting
 
