@@ -30,9 +30,15 @@ Paste the entire `Persistent_Memory_Local_JSONL.py`, save it, and enable it for 
 
 ### 3. Install the Viewer Action
 
-Enable the separate **View Persistent Memory** Action.
+In Open WebUI, go to:
 
-After an assistant response, hover over the response and use the Action in the message toolbar to see your active memories in a table.
+**Admin Panel → Functions → Create Function**
+
+Paste the `View Persistent Memory Action code` and save it.
+
+Then click the ⋮ (three dots) next to the Action and turn Global ON. This automatically enables the Action for all models.
+
+After an assistant response, hover over the response and use View Persistent Memory in the message toolbar to see your active memories in a table.
 
 ---
 
