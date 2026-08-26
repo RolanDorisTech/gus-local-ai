@@ -1,48 +1,64 @@
-"""
-title: Token Usage Display - LM Studio Accurate Bionic Persistent
-author: Rolan & Doris Tech
-version: 2.4.05 DEBUG FIX
-description: Fix emitter param + metadata param, force emit.
-"""
-
-from pydantic import BaseModel, Field
-import re, time, threading, hashlib
-from collections import OrderedDict
-from typing import Optional, Any, Dict
-
-WORD_RE = re.compile(r"\b[\w’'-]+\b", re.UNICODE)
-TOKEN_RE = re.compile(r"\w+|[^\w\s]", re.UNICODE)
-THINK_RE = re.compile(
-    r"<" + "think[^>]*>.*?" + "<" + "/think>", re.DOTALL | re.IGNORECASE
-)
-REASONING_RE = re.compile(
-    r"<" + "(?:reasoning|thought)[^>]*>.*?" + "<" + "/(?:reasoning|thought)>",
-    re.DOTALL | re.IGNORECASE,
-)
-
-MAX_CHATS = 500
-CUMULATIVE: OrderedDict[str, Dict[str, Any]] = OrderedDict()
-LOCK = threading.Lock()
-
-
-class Filter:
-    class Valves(BaseModel):
-        priority: int = Field(default=20)
-
-    def __init__(self):
-        self.valves = self.Valves()
-
-    @staticmethod
-    def fmt(n: int) -> str:
-        if n >= 1_000_000:
-            return f"{n/1e6:.1f}M"
-        if n >= 1000:
-            return f"{n/1e3:.1f}k"
-        return str(int(n))
-
-    @staticmethod
-    def fmt_w(n: int) -> str:
-        return f"{Filter.fmt(n)}w"
+"""  
+title: Token Usage Display - LM Studio Accurate Bionic Persistent  
+author: Rolan & Doris Tech  
+version: 2.4.06 TIME FORMAT FIX  
+description: Time format: <60s => decimal seconds, >=60s => H:MM:SS.  
+"""  
+  
+from pydantic import BaseModel, Field  
+import re, time, threading, hashlib  
+from collections import OrderedDict  
+from typing import Optional, Any, Dict  
+  
+WORD_RE = re.compile(r"\b[\w’'-]+\b", re.UNICODE)  
+TOKEN_RE = re.compile(r"\w+|[^\w\s]", re.UNICODE)  
+THINK_RE = re.compile(  
+    r"<" + "think[^>]*>.*?" + "<" + "/think>", re.DOTALL | re.IGNORECASE  
+)  
+REASONING_RE = re.compile(  
+    r"<" + "(?:reasoning|thought)[^>]*>.*?" + "<" + "/(?:reasoning|thought)>",  
+    re.DOTALL | re.IGNORECASE,  
+)  
+  
+MAX_CHATS = 500  
+CUMULATIVE: OrderedDict[str, Dict[str, Any]] = OrderedDict()  
+LOCK = threading.Lock()  
+  
+  
+class Filter:  
+    class Valves(BaseModel):  
+        priority: int = Field(default=20)  
+  
+    def __init__(self):  
+        self.valves = self.Valves()  
+  
+    @staticmethod  
+    def fmt(n: int) -> str:  
+        if n >= 1_000_000:  
+            return f"{n/1e6:.1f}M"  
+        if n >= 1000:  
+            return f"{n/1e3:.1f}k"  
+        return str(int(n))  
+  
+    @staticmethod  
+    def fmt_w(n: int) -> str:  
+        return f"{Filter.fmt(n)}w"  
+  
+    @staticmethod  
+    def fmt_time(seconds: float) -> str:  
+        """
+        < 60s  => '18.3s'
+        60-3599s => 'MM:SS'
+        >= 3600s => 'H:MM:SS'
+        """  
+        s = int(seconds)
+        if s < 60:
+            return f"{seconds:.1f}s"
+        h, rem = divmod(s, 3600)
+        m, sec = divmod(rem, 60)
+        if h > 0:
+            return f"{h}:{m:02d}:{sec:02d}"
+        return f"{m}:{sec:02d}"
 
     @staticmethod
     def extract_text(content: Any) -> str:
@@ -315,7 +331,9 @@ class Filter:
                 cp_w, cr_w = cum["p_w"], cum["r_w"]
             ct_tok = cp_tok + cr_tok
             ct_w = cp_w + cr_w
-            description = f"🚀{tps:.1f}t/s({total_elapsed:.1f}s) 🪟Σ{self.fmt(ct_tok)}({self.fmt_w(ct_w)}) 👇P{self.fmt(prompt_tokens)}·{self.fmt_w(prompt_words)}|R{self.fmt(completion_tokens)}·{self.fmt_w(reply_words)} 📈ΣP{self.fmt(cp_tok)}·{self.fmt_w(cp_w)}|ΣR{self.fmt(cr_tok)}·{self.fmt_w(cr_w)}"
+
+            time_str = self.fmt_time(total_elapsed)
+            description = f"🚀{tps:.1f}t/s({time_str}) 🪟Σ{self.fmt(ct_tok)}({self.fmt_w(ct_w)}) 👇P{self.fmt(prompt_tokens)}·{self.fmt_w(prompt_words)}|R{self.fmt(completion_tokens)}·{self.fmt_w(reply_words)} 📈ΣP{self.fmt(cp_tok)}·{self.fmt_w(cp_w)}|ΣR{self.fmt(cr_tok)}·{self.fmt_w(cr_w)}"
 
             if isinstance(usage, dict) and not isinstance(body.get("usage"), dict):
                 body["usage"] = {
