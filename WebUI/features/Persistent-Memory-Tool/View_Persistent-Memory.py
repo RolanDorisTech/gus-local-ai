@@ -1,7 +1,7 @@
 """
 title: View Persistent Memory
 author: Rolan & Doris Tech
-version: 1.1.0
+version: 1.2.0
 description: One-click viewer for local Persistent Memory JSONL with automatic dark/light mode support.
 """
 
@@ -82,6 +82,7 @@ class Action:
             <html>
             <head>
                 <meta charset="utf-8">
+
                 <style>
                     :root {{
                         color-scheme: light dark;
@@ -214,20 +215,20 @@ class Action:
 
             rows.append(f"""
                 <tr>
-                    <td class="time">
-                        {timestamp}
-                    </td>
-
                     <td class="category">
                         {memory_path}
                     </td>
 
-                    <td class="tags">
-                        {tags}
-                    </td>
-
                     <td class="content">
                         {content}
+                    </td>
+
+                    <td class="time">
+                        {timestamp}
+                    </td>
+
+                    <td class="tags">
+                        {tags}
                     </td>
                 </tr>
                 """)
@@ -279,11 +280,12 @@ class Action:
 
                 .table-container {{
                     width: 100%;
-                    overflow-x: auto;
+                    overflow-x: hidden;
                 }}
 
                 table {{
                     width: 100%;
+                    table-layout: fixed;
                     border-collapse: collapse;
                     font-size: 0.9em;
                 }}
@@ -299,6 +301,9 @@ class Action:
                     padding: 9px;
                     text-align: left;
                     vertical-align: top;
+
+                    overflow-wrap: anywhere;
+                    word-break: break-word;
                 }}
 
                 th {{
@@ -309,7 +314,6 @@ class Action:
                     );
 
                     font-weight: 650;
-                    white-space: nowrap;
                 }}
 
                 tr:nth-child(even) {{
@@ -320,24 +324,30 @@ class Action:
                     );
                 }}
 
-                .time {{
-                    white-space: nowrap;
-                    opacity: 0.8;
-                }}
-
+                /* Main readable fields */
                 .category {{
-                    white-space: nowrap;
+                    width: 20%;
                     font-weight: 600;
                 }}
 
-                .tags {{
-                    white-space: nowrap;
+                .content {{
+                    width: 52%;
+                    line-height: 1.45;
+                }}
+
+                /* Compact fields on the right */
+                .time {{
+                    width: 13%;
+                    font-size: 0.78em;
+                    line-height: 1.35;
                     opacity: 0.75;
                 }}
 
-                .content {{
-                    min-width: 300px;
-                    line-height: 1.45;
+                .tags {{
+                    width: 15%;
+                    font-size: 0.78em;
+                    line-height: 1.35;
+                    opacity: 0.75;
                 }}
 
                 @media (max-width: 700px) {{
@@ -346,13 +356,29 @@ class Action:
                         padding: 10px;
                     }}
 
+                    table {{
+                        font-size: 0.84em;
+                    }}
+
                     th,
                     td {{
                         padding: 7px;
                     }}
 
+                    .category {{
+                        width: 21%;
+                    }}
+
                     .content {{
-                        min-width: 220px;
+                        width: 49%;
+                    }}
+
+                    .time {{
+                        width: 14%;
+                    }}
+
+                    .tags {{
+                        width: 16%;
                     }}
                 }}
             </style>
@@ -372,12 +398,19 @@ class Action:
 
                 <table>
 
+                    <colgroup>
+                        <col style="width:20%">
+                        <col style="width:52%">
+                        <col style="width:13%">
+                        <col style="width:15%">
+                    </colgroup>
+
                     <thead>
                         <tr>
-                            <th>Time</th>
                             <th>Category</th>
+                            <th>Description</th>
+                            <th>Time</th>
                             <th>Tags</th>
-                            <th>Memory</th>
                         </tr>
                     </thead>
 
