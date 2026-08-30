@@ -1,13 +1,17 @@
 """
 title: Persistent Memory - Local JSONL
 author: Rolan & Doris Tech
-version: 2.0.01 Personal
-description: Persistent local JSONL memory for hardware specs, project decisions, and user preferences. Optimized for local Open WebUI installations.
+version: 3.2.0
+description: Persistent local JSONL memory with selective tag retrieval, version
+             history, recoverable deletion, audit events, token-budgeted writes,
+             and manual confirmation for mutations.
 """
 
+import hashlib
 import json
 import os
 import re
+import tempfile
 import threading
 import uuid
 from datetime import datetime
@@ -18,56 +22,78 @@ from pydantic import BaseModel, Field
 
 class Tools:
     """
-    Persistent local memory using a JSONL file.
+    Persistent local memory.
 
-    Personal configuration:
-    - Primary storage on RocketQQ SSD
-    - Automatic fallback for Docker/container environments
-    - No cloud services
-    - No embeddings or vector database required
-    - Memory survives restarts
-    - Lightweight keyword-based retrieval
+    Files:
+      - memory.jsonl: active authoritative memories
+      - memory_history.jsonl: replaced previous versions
+      - memory_deleted.jsonl: deleted memories available for restoration
+      - memory_events.jsonl: audit log of add/replace/delete/restore mutations
+
+    Only active memory.jsonl is searched during normal retrieval.
+
+    Manual confirmation model:
+      - Mutations return a confirmation token first.
+      - A matching confirmed mutation must be submitted before any write.
+      - Confirmation tokens are short-lived and bound to the exact target.
     """
 
     class Valves(BaseModel):
         memory_file: str = Field(
             default="/Volumes/RocketQQ/open-webui-data/qwen-memory/memory.jsonl",
-            description="Primary host path on Mac / RocketQQ SSD.",
+            description="Primary active memory file on RocketQQ SSD.",
         )
-
         fallback_file: str = Field(
             default="/app/backend/data/qwen-memory/memory.jsonl",
-            description="Fallback path inside Docker or container environments.",
+            description="Fallback active memory file inside Docker.",
         )
-
         max_results: int = Field(
             default=5,
             ge=1,
             le=20,
-            description="Maximum number of matching memories returned per search.",
+            description="Maximum matching active memories returned.",
         )
-
         max_memory_length: int = Field(
             default=2000,
             ge=100,
             le=10000,
-            description="Maximum character length for a single stored memory.",
+            description="Maximum character length of one memory.",
         )
-
+        max_tags: int = Field(
+            default=6,
+            ge=1,
+            le=12,
+            description="Maximum tags stored on one memory.",
+        )
         enable_duplicate_check: bool = Field(
             default=True,
-            description="Skip exact duplicate memories.",
+            description="Skip exact duplicate active memories.",
+        )
+        max_token_budget: int = Field(
+            default=250,
+            ge=16,
+            le=4000,
+            description=(
+                "Maximum approximate token count allowed for one active memory. "
+                "Keeps shared memories compact."
+            ),
+        )
+        confirmation_ttl_seconds: int = Field(
+            default=300,
+            ge=30,
+            le=3600,
+            description="How long a memory mutation confirmation remains valid.",
+        )
+        require_confirmation: bool = Field(
+            default=True,
+            description="Require explicit two-phase confirmation for mutations.",
         )
 
     def __init__(self):
         self.valves = self.Valves()
-
-        # RLock allows update_memory() to safely call _load()
-        # while already holding the same lock.
         self._lock = threading.RLock()
+        self._confirmations: Dict[str, Dict[str, Any]] = {}
 
-        # Use RocketQQ SSD when available.
-        # Otherwise use the configured fallback path.
         if os.path.exists("/Volumes/RocketQQ"):
             self._memory_file = os.path.expanduser(
                 os.path.expandvars(self.valves.memory_file)
@@ -77,81 +103,136 @@ class Tools:
                 os.path.expandvars(self.valves.fallback_file)
             )
 
-        try:
-            self._ensure_memory_file()
+        directory = os.path.dirname(self._memory_file)
 
+        self._history_file = os.path.join(directory, "memory_history.jsonl")
+        self._deleted_file = os.path.join(directory, "memory_deleted.jsonl")
+        self._events_file = os.path.join(directory, "memory_events.jsonl")
+
+        try:
+            self._ensure_files()
         except Exception as e:
             print(f"Persistent Memory initialization error: {e}")
 
-    def _ensure_memory_file(self) -> None:
-        """Create the memory directory and JSONL file if needed."""
-
+    def _ensure_files(self) -> None:
+        """Create memory directory and storage files if needed."""
         directory = os.path.dirname(self._memory_file)
-
         if directory:
             os.makedirs(directory, exist_ok=True)
 
-        if not os.path.exists(self._memory_file):
-            with open(
-                self._memory_file,
-                "a",
-                encoding="utf-8",
-            ):
-                pass
+        for path in (
+            self._memory_file,
+            self._history_file,
+            self._deleted_file,
+            self._events_file,
+        ):
+            if not os.path.exists(path):
+                with open(path, "a", encoding="utf-8"):
+                    pass
 
-    def _load(self) -> List[Dict[str, Any]]:
-        """Load valid JSONL memory entries."""
+    def _load_file(self, path: str) -> List[Dict[str, Any]]:
+        """Load valid JSONL entries from one file."""
+        entries: List[Dict[str, Any]] = []
 
-        memories = []
-
-        if not os.path.exists(self._memory_file):
-            return memories
+        if not os.path.exists(path):
+            return entries
 
         try:
-            with self._lock:
-                with open(
-                    self._memory_file,
-                    "r",
-                    encoding="utf-8",
-                ) as file:
+            with open(path, "r", encoding="utf-8") as file:
+                for line in file:
+                    line = line.strip()
 
-                    for line in file:
-                        line = line.strip()
+                    if not line:
+                        continue
 
-                        if not line:
-                            continue
+                    try:
+                        entry = json.loads(line)
 
-                        try:
-                            entry = json.loads(line)
+                        if isinstance(entry, dict):
+                            entries.append(entry)
 
-                            if isinstance(entry, dict):
-                                memories.append(entry)
-
-                        except json.JSONDecodeError:
-                            # Ignore malformed JSONL lines instead of
-                            # failing the entire memory store.
-                            continue
+                    except json.JSONDecodeError:
+                        continue
 
         except Exception as e:
             print(f"Persistent Memory load error: {e}")
+            return entries
 
-        return memories
+        return entries
+
+    def _load(self) -> List[Dict[str, Any]]:
+        """Load active memories only."""
+        with self._lock:
+            return self._load_file(self._memory_file)
+
+    def _append(self, path: str, entry: Dict[str, Any]) -> None:
+        """Append one JSONL entry."""
+        with open(path, "a", encoding="utf-8") as file:
+            file.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            file.flush()
+            os.fsync(file.fileno())
+
+    def _rewrite_active(self, memories: List[Dict[str, Any]]) -> None:
+        """Atomically rewrite active memory."""
+        directory = os.path.dirname(self._memory_file) or "."
+        fd, temp_path = tempfile.mkstemp(
+            prefix="memory-",
+            suffix=".jsonl",
+            dir=directory,
+            text=True,
+        )
+
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as temp_file:
+                for memory in memories:
+                    temp_file.write(
+                        json.dumps(memory, ensure_ascii=False) + "\n"
+                    )
+
+                temp_file.flush()
+                os.fsync(temp_file.fileno())
+                os.replace(temp_path, self._memory_file)
+
+        except Exception:
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+
+            raise
+
+    def _rewrite_deleted(self, memories: List[Dict[str, Any]]) -> None:
+        """Atomically rewrite deleted memory."""
+        directory = os.path.dirname(self._deleted_file) or "."
+        fd, temp_path = tempfile.mkstemp(
+            prefix="memory-deleted-",
+            suffix=".jsonl",
+            dir=directory,
+            text=True,
+        )
+
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as temp_file:
+                for memory in memories:
+                    temp_file.write(
+                        json.dumps(memory, ensure_ascii=False) + "\n"
+                    )
+
+                temp_file.flush()
+                os.fsync(temp_file.fileno())
+                os.replace(temp_path, self._deleted_file)
+
+        except Exception:
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+
+            raise
 
     def _tokenize(self, text: str) -> List[str]:
-        """
-        Normalize and tokenize text for lightweight keyword matching.
-
-        Supports:
-        - English
-        - Numbers
-        - Hyphenated technical terms
-        - Chinese
-        - Japanese
-        - Korean
-        """
-
+        """Lightweight multilingual tokenizer."""
         text = text.lower().strip()
-
         return re.findall(
             r"[a-z0-9_][a-z0-9_\-]*"
             r"|[\u4e00-\u9fff]+"
@@ -160,66 +241,311 @@ class Tools:
             text,
         )
 
+    def _approx_tokens(self, text: str) -> int:
+        """
+        Approximate token count for budgeting.
+
+        Latin-like text: roughly characters / 4.
+        CJK characters: roughly 1 token per character.
+        The result is intentionally approximate and cheap.
+        """
+        if not text:
+            return 0
+
+        count = 0.0
+
+        for seg in self._tokenize(text):
+            cjk_chars = sum(1 for c in seg if "\u4e00" <= c <= "\u9fff")
+
+            if cjk_chars:
+                count += cjk_chars
+                count += max(1, round((len(seg) - cjk_chars) / 4.0))
+            else:
+                count += max(1, round(len(seg) / 4.0))
+
+        return max(1, int(count * 1.25))
+
+    def _normalize_tags(self, tags: Any) -> List[str]:
+        """Normalize tags into a small unique lowercase list."""
+        if tags is None:
+            return []
+
+        if isinstance(tags, str):
+            raw_tags = re.split(r"[,;\s]+", tags)
+        elif isinstance(tags, list):
+            raw_tags = tags
+        else:
+            return []
+
+        normalized = []
+
+        for tag in raw_tags:
+            tag = str(tag).strip().lower()
+            if not tag:
+                continue
+
+            tag = re.sub(r"[^a-z0-9_\-:/]", "", tag)
+
+            if tag and tag not in normalized:
+                normalized.append(tag)
+
+        return normalized[: self.valves.max_tags]
+
+    def _describe_tags(self, memory: Dict[str, Any]) -> str:
+        """Return a comma-separated normalized tag string for audit records."""
+        return ",".join(self._normalize_tags(memory.get("tags", [])))
+
+    def _record_event(
+        self,
+        action: str,
+        target_id: str,
+        summary: str = "",
+        path: str = "uncategorized",
+        tags: str = "",
+        tokens: Optional[int] = None,
+    ) -> None:
+        """Append one audit record to memory_events.jsonl."""
+        if not os.path.exists(self._events_file):
+            self._ensure_files()
+
+        entry = {
+            "id": str(uuid.uuid4()),
+            "event": action,
+            "memory_id": target_id,
+            "content": summary[: self.valves.max_memory_length],
+            "path": path,
+            "tags": tags,
+            "tokens": tokens,
+            "timestamp": datetime.now().isoformat(),
+        }
+
+        try:
+            self._append(self._events_file, entry)
+        except Exception as e:
+            print(f"Persistent Memory event log error: {e}")
+
     def _score_memory(
         self,
         query: str,
         memory: Dict[str, Any],
+        required_tags: Optional[List[str]] = None,
     ) -> int:
-        """
-        Calculate a simple keyword relevance score.
+        """Calculate lightweight keyword and tag relevance."""
+        query = query.lower().strip()
 
-        This is intentionally lightweight and does not require
-        embeddings or a vector database.
-        """
+        if not query:
+            return 0
 
         content = str(memory.get("content", "")).lower()
         path = str(memory.get("path", "")).lower()
-        searchable = f"{path} {content}"
+        tags = self._normalize_tags(memory.get("tags", []))
+        tag_text = " ".join(tags)
 
-        query_normalized = query.lower().strip()
-
-        if not query_normalized:
-            return 0
+        searchable = f"{path} {content} {tag_text}"
 
         score = 0
 
-        # Strong match for the complete query.
-        if query_normalized in searchable:
+        if query in searchable:
             score += 10
 
-        query_tokens = self._tokenize(query_normalized)
-
-        for token in query_tokens:
-            # Category/path matches are slightly more important.
+        for token in self._tokenize(query):
             if token in path:
                 score += 4
-
+            if token in tag_text:
+                score += 5
             if token in content:
                 score += 2
 
+        if required_tags:
+            required = set(self._normalize_tags(required_tags))
+
+            if required and not required.intersection(set(tags)):
+                return 0
+
+            if required:
+                score += 8
+
         return score
+
+    def _find_memory(self, memory_id: str) -> Optional[Dict[str, Any]]:
+        """Find an active memory by id."""
+        memory_id = memory_id.strip()
+
+        for memory in self._load():
+            if str(memory.get("id", "")) == memory_id:
+                return memory
+
+        return None
+
+    def _find_deleted_memory(self, memory_id: str) -> Optional[Dict[str, Any]]:
+        """Find a deleted memory by id."""
+        memory_id = memory_id.strip()
+
+        for memory in self._load_file(self._deleted_file):
+            if str(memory.get("id", "")) == memory_id:
+                return memory
+
+        return None
+
+    def _checksum(self, *parts: Any) -> str:
+        """Create a short stable checksum for confirmation binding."""
+        raw = "|".join(str(part) for part in parts)
+        digest = hashlib.sha256(raw.encode("utf-8", "replace")).hexdigest()
+        return digest[:32]
+
+    def _make_confirmation(
+        self,
+        op: str,
+        memory_id: str,
+        checksum: str,
+        reason: str = "pending",
+    ) -> str:
+        """Create and store a short-lived confirmation token."""
+        token = f"mem-{op}-{uuid.uuid4().hex}-{checksum}"
+
+        with self._lock:
+            now = datetime.now().timestamp()
+
+            # Expire old confirmations before inserting a new one.
+            expired = [
+                key
+                for key, data in self._confirmations.items()
+                if (now - data.get("created_at", now)) > self.valves.confirmation_ttl_seconds
+            ]
+
+            for key in expired:
+                self._confirmations.pop(key, None)
+
+            self._confirmations[token] = {
+                "op": op,
+                "memory_id": memory_id,
+                "checksum": checksum,
+                "reason": reason,
+                "created_at": now,
+                "expires_at": now + self.valves.confirmation_ttl_seconds,
+            }
+
+        return token
+
+    def _consume_confirmation(
+        self,
+        token: str,
+        op: str,
+        memory_id: str,
+        checksum: str,
+    ) -> bool:
+        """Validate and consume a confirmation token."""
+        token = token.strip()
+
+        if not token:
+            return False
+
+        with self._lock:
+            now = datetime.now().timestamp()
+            confirmation = self._confirmations.get(token)
+
+            if not confirmation:
+                return False
+
+            if confirmation.get("op") != op:
+                self._confirmations.pop(token, None)
+                return False
+
+            if confirmation.get("memory_id") != memory_id:
+                self._confirmations.pop(token, None)
+                return False
+
+            if confirmation.get("checksum") != checksum:
+                self._confirmations.pop(token, None)
+                return False
+
+            if now > confirmation.get("expires_at", now):
+                self._confirmations.pop(token, None)
+                return False
+
+            # Single-use confirmation.
+            self._confirmations.pop(token, None)
+            return True
+
+    def _preview(self, op: str, memory_id: str, checksum: str, details: str) -> str:
+        """Return a human-readable preview and confirmation token."""
+        if not self.valves.require_confirmation:
+            return f"[{op}] Confirmation disabled. Proceeding without token."
+
+        token = self._make_confirmation(op, memory_id, checksum)
+
+        return (
+            "Manual confirmation required for memory mutation.\n"
+            f"Operation: {op}\n"
+            f"Target memory ID: {memory_id}\n"
+            f"Checksum: {checksum}\n"
+            f"Details: {details}\n"
+            f"Confirm token: {token}\n"
+            f"This confirmation expires in "
+            f"{self.valves.confirmation_ttl_seconds} seconds and is single-use.\n"
+            "To proceed, call the matching confirm_* tool with this token."
+        )
+
+    def _validate_content_limits(
+        self,
+        content: str,
+        normalized_tags: List[str],
+        phase: str,
+    ) -> Optional[str]:
+        """Validate size and tag limits. Returns an error string or None."""
+        if not content:
+            return "ERROR: Memory content cannot be empty."
+
+        token_count = self._approx_tokens(content)
+
+        if token_count > self.valves.max_token_budget:
+            return (
+                f"ERROR: Memory is too long (~{token_count} tokens, "
+                f"max {self.valves.max_token_budget}). "
+                "Store only the essential fact — trim it."
+            )
+
+        if len(content) > self.valves.max_memory_length:
+            return (
+                "ERROR: Memory is too long. "
+                f"Maximum length is "
+                f"{self.valves.max_memory_length} characters."
+            )
+
+        if not normalized_tags:
+            return "ERROR: At least one useful memory tag is required."
+
+        return None
 
     def search_memory(
         self,
         query: str = Field(
             ...,
             description=(
-                "Search persistent memory using concise keywords. "
-                "Examples: hardware model, project name, previous "
-                "decision, user preference, or saved fact."
+                "Search active persistent memory using concise keywords. "
+                "Use when a previous user-specific fact, preference, "
+                "hardware specification, project decision, configuration, "
+                "workflow, or durable information is materially relevant. "
+                "Do not search for greetings, generic questions, temporary "
+                "context, or information already present in the current "
+                "conversation."
+            ),
+        ),
+        tags: Optional[List[str]] = Field(
+            default=None,
+            description=(
+                "Optional tags to narrow retrieval. Use when the relevant "
+                "category is obvious, for example ['hardware'], "
+                "['project', 'gus'], or ['preferences']."
             ),
         ),
     ) -> str:
         """
-        Search persistent local JSONL memory.
+        Search active memory only.
 
-        Use when previous user-specific information would materially
-        improve the answer, such as hardware specifications, project
-        decisions, preferences, or previously saved facts.
-
-        This is keyword-based retrieval, not semantic/vector search.
+        Search when prior durable user-specific information would materially
+        improve the answer.
         """
-
         query = query.strip()
 
         if not query:
@@ -228,24 +554,17 @@ class Tools:
         memories = self._load()
 
         if not memories:
-            return (
-                "No memories are stored yet. "
-                "Do not retry unless new memory is added."
-            )
+            return "No active memories are stored."
 
+        normalized_tags = self._normalize_tags(tags)
         scored = []
 
         for memory in memories:
-            score = self._score_memory(
-                query,
-                memory,
-            )
+            score = self._score_memory(query, memory, normalized_tags)
 
             if score > 0:
                 scored.append((score, memory))
 
-        # Higher relevance first.
-        # For equal relevance, newer memories first.
         scored.sort(
             key=lambda item: (
                 item[0],
@@ -257,181 +576,710 @@ class Tools:
         hits = [memory for _, memory in scored[: self.valves.max_results]]
 
         if not hits:
-            return (
-                f"No relevant memory was found for '{query}'. "
-                "Answer using the current conversation or general knowledge."
-            )
+            return f"No relevant active memory was found for '{query}'."
 
-        lines = []
+        lines = [f"Found {len(hits)} relevant active memory record(s):"]
 
         for memory in hits:
+            memory_id = str(memory.get("id", ""))
             timestamp = str(memory.get("timestamp", ""))[:19]
-
-            path = str(
-                memory.get(
-                    "path",
-                    "uncategorized",
-                )
-            )
-
+            path = str(memory.get("path", "uncategorized"))
+            memory_tags = self._normalize_tags(memory.get("tags", []))
             content = str(memory.get("content", ""))
 
-            lines.append(f"[{timestamp}] [{path}] {content}")
+            lines.append(
+                f"[id={memory_id}] "
+                f"[{timestamp}] "
+                f"[{path}] "
+                f"[tags={','.join(memory_tags)}] "
+                f"{content}"
+            )
 
-        return (
-            "Relevant persistent memories found:\n"
-            + "\n".join(lines)
-            + "\n\nUse these memories when relevant. "
+        lines.append(
+            "\nUse only information relevant to the current request. "
             "Do not repeatedly search for the same information."
         )
+
+        return "\n".join(lines)
 
     def update_memory(
         self,
         content: str = Field(
             ...,
             description=(
-                "Save only durable user-specific facts, preferences, "
-                "decisions, or project configuration explicitly requested "
-                "for future memory. Never save code, READMEs, documents, "
-                "drafts, ordinary answers, or temporary task content."
+                "Save only a concise durable user-specific fact, preference, "
+                "decision, configuration, hardware specification, or workflow "
+                "explicitly requested for future memory. Never save code, "
+                "READMEs, documents, drafts, ordinary answers, or temporary "
+                "task content."
             ),
         ),
         path: str = Field(
             ...,
             description=(
-                "Short category path such as "
-                "'hardware/M1Max', "
-                "'project/Gus', or "
-                "'preferences/response-style'."
+                "Short category path, for example hardware/M1Max, "
+                "project/Gus, preferences/response-style."
+            ),
+        ),
+        tags: str = Field(
+            ...,
+            description=(
+                "Comma-separated retrieval tags. Use a few specific tags, "
+                "for example hardware,m1max,local-ai."
             ),
         ),
     ) -> str:
         """
-        Save a durable user-specific fact to persistent local memory.
+        Preview adding a new active memory.
 
-        Use ONLY when the user explicitly asks to remember, save, store,
-        or retain information for future conversations.
+        Keep memories concise and atomic. Prefer one fact or one decision
+        per memory.
 
-        Never use for code, READMEs, documents, drafts, ordinary task
-        output, or temporary context.
+        This does NOT write until confirm_update_memory is called.
         """
-
         content = content.strip()
         path = path.strip()
-
-        if not content:
-            return "ERROR: Memory content cannot be empty."
+        normalized_tags = self._normalize_tags(tags)
 
         if not path:
             return "ERROR: Memory path cannot be empty."
 
-        if len(content) > self.valves.max_memory_length:
+        error = self._validate_content_limits(content, normalized_tags, "update_memory")
+        if error:
+            return error
+
+        checksum = self._checksum(
+            "add",
+            path,
+            ",".join(normalized_tags),
+            content,
+        )
+
+        return self._preview(
+            op="add",
+            memory_id="pending",
+            checksum=checksum,
+            details=(
+                f"Add new memory [{path}] "
+                f"[tags={','.join(normalized_tags)}] "
+                f"({self._approx_tokens(content)} tokens): {content}"
+            ),
+        )
+
+    def confirm_update_memory(
+        self,
+        confirmation_token: str = Field(
+            ...,
+            description=(
+                "Confirmation token returned by update_memory. "
+                "Required to complete a pending add operation."
+            ),
+        ),
+        content: str = Field(
+            ...,
+            description="Same content previewed by update_memory.",
+        ),
+        path: str = Field(
+            ...,
+            description="Same path previewed by update_memory.",
+        ),
+        tags: str = Field(
+            ...,
+            description="Same tags previewed by update_memory.",
+        ),
+    ) -> str:
+        """
+        Complete adding a new active memory after explicit confirmation.
+
+        This writes the memory only if the confirmation token matches the
+        exact previewed content, path, and tags.
+        """
+        content = content.strip()
+        path = path.strip()
+        normalized_tags = self._normalize_tags(tags)
+
+        error = self._validate_content_limits(content, normalized_tags, "confirm_update_memory")
+        if error:
+            return error
+
+        checksum = self._checksum(
+            "add",
+            path,
+            ",".join(normalized_tags),
+            content,
+        )
+
+        if not self._consume_confirmation(
+            confirmation_token,
+            op="add",
+            memory_id="pending",
+            checksum=checksum,
+        ):
             return (
-                "ERROR: Memory is too long. "
-                f"Maximum length is "
-                f"{self.valves.max_memory_length} characters."
+                "ERROR: Confirmation invalid, expired, or does not match "
+                "the requested memory. Preview again and use the latest "
+                "confirmation token."
             )
 
         try:
-            self._ensure_memory_file()
-
+            self._ensure_files()
         except Exception as e:
             return f"ERROR: Cannot create memory directory: {e}"
 
         with self._lock:
-
             if self.valves.enable_duplicate_check:
                 memories = self._load()
-
-                normalized_content = content.lower()
+                normalized_content = content.lower().strip()
 
                 for memory in memories:
                     existing_content = str(memory.get("content", "")).strip().lower()
 
                     if existing_content == normalized_content:
-                        existing_path = memory.get(
-                            "path",
-                            "uncategorized",
-                        )
+                        existing_path = memory.get("path", "uncategorized")
 
                         return (
-                            f"Already remembered in "
-                            f"'{existing_path}' "
-                            "- skipping duplicate."
+                            f"Already remembered in '{existing_path}' - "
+                            "skipping duplicate."
                         )
 
             entry = {
                 "id": str(uuid.uuid4()),
                 "content": content,
                 "path": path,
+                "tags": normalized_tags,
                 "timestamp": datetime.now().isoformat(),
+                "confirmed_by": "manual_confirmation",
             }
 
             try:
-                with open(
-                    self._memory_file,
-                    "a",
-                    encoding="utf-8",
-                ) as file:
-
-                    file.write(
-                        json.dumps(
-                            entry,
-                            ensure_ascii=False,
-                        )
-                        + "\n"
-                    )
-
-                    file.flush()
-
+                self._append(self._memory_file, entry)
             except Exception as e:
                 return f"ERROR: Could not save memory: {e}"
 
-        return f"Saved persistent memory: [{path}] {content}"
+            self._record_event(
+                action="add",
+                target_id=entry["id"],
+                summary=content,
+                path=path,
+                tags=",".join(normalized_tags),
+                tokens=self._approx_tokens(content),
+            )
 
-    def list_recent_memories(
+        return (
+            f"Confirmed and saved active memory "
+            f"[{path}] "
+            f"[tags={','.join(normalized_tags)}] "
+            f"({self._approx_tokens(content)} tokens): {content}"
+        )
+
+    def replace_memory(
         self,
-        limit: int = Field(
-            default=10,
-            ge=1,
-            le=50,
-            description="Maximum number of recent memories to return.",
+        memory_id: str = Field(
+            ...,
+            description=(
+                "Exact ID of the active memory being replaced. "
+                "Search memory first if the ID is unknown."
+            ),
+        ),
+        content: str = Field(
+            ...,
+            description="New replacement memory content.",
+        ),
+        path: str = Field(
+            ...,
+            description="Category path for the replacement memory.",
+        ),
+        tags: str = Field(
+            ...,
+            description="Comma-separated retrieval tags for the replacement memory.",
         ),
     ) -> str:
         """
-        List the most recently saved memories.
+        Preview replacing one active memory.
 
-        Use when the user asks what is currently stored in
-        persistent memory.
+        This does NOT write until confirm_replace_memory is called.
         """
+        memory_id = memory_id.strip()
+        content = content.strip()
+        path = path.strip()
+        normalized_tags = self._normalize_tags(tags)
 
-        memories = self._load()
+        if not memory_id:
+            return "ERROR: Memory ID cannot be empty."
 
-        if not memories:
-            return "No memories are currently stored."
+        error = self._validate_content_limits(content, normalized_tags, "replace_memory")
+        if error:
+            return error
 
-        memories.sort(
-            key=lambda memory: memory.get(
-                "timestamp",
-                "",
-            ),
-            reverse=True,
+        old_memory = self._find_memory(memory_id)
+
+        if old_memory is None:
+            return f"ERROR: No active memory found with ID '{memory_id}'."
+
+        old_checksum = self._checksum(
+            "replace",
+            memory_id,
+            str(old_memory.get("content", "")),
+            str(old_memory.get("path", "")),
+            ",".join(self._normalize_tags(old_memory.get("tags", []))),
         )
 
-        lines = []
+        checksum = self._checksum(
+            "replace",
+            memory_id,
+            old_checksum,
+            path,
+            ",".join(normalized_tags),
+            content,
+        )
 
-        for memory in memories[:limit]:
-            timestamp = str(memory.get("timestamp", ""))[:19]
+        return self._preview(
+            op="replace",
+            memory_id=memory_id,
+            checksum=checksum,
+            details=(
+                f"Replace memory [{memory_id}] "
+                f"from [{old_memory.get('path', 'uncategorized')}] "
+                f"to [{path}] "
+                f"[tags={','.join(normalized_tags)}] "
+                f"({self._approx_tokens(content)} tokens): {content}"
+            ),
+        )
 
-            path = str(
-                memory.get(
-                    "path",
-                    "uncategorized",
-                )
+    def confirm_replace_memory(
+        self,
+        confirmation_token: str = Field(
+            ...,
+            description=(
+                "Confirmation token returned by replace_memory. "
+                "Required to complete a pending replace operation."
+            ),
+        ),
+        memory_id: str = Field(
+            ...,
+            description="Same memory ID previewed by replace_memory.",
+        ),
+        content: str = Field(
+            ...,
+            description="Same replacement content previewed by replace_memory.",
+        ),
+        path: str = Field(
+            ...,
+            description="Same path previewed by replace_memory.",
+        ),
+        tags: str = Field(
+            ...,
+            description="Same tags previewed by replace_memory.",
+        ),
+    ) -> str:
+        """
+        Complete replacing one active memory after explicit confirmation.
+
+        The previous version is automatically moved to
+        memory_history.jsonl.
+        """
+        memory_id = memory_id.strip()
+        content = content.strip()
+        path = path.strip()
+        normalized_tags = self._normalize_tags(tags)
+
+        if not memory_id:
+            return "ERROR: Memory ID cannot be empty."
+
+        error = self._validate_content_limits(content, normalized_tags, "confirm_replace_memory")
+        if error:
+            return error
+
+        old_memory = self._find_memory(memory_id)
+
+        if old_memory is None:
+            return f"ERROR: No active memory found with ID '{memory_id}'."
+
+        old_checksum = self._checksum(
+            "replace",
+            memory_id,
+            str(old_memory.get("content", "")),
+            str(old_memory.get("path", "")),
+            ",".join(self._normalize_tags(old_memory.get("tags", []))),
+        )
+
+        checksum = self._checksum(
+            "replace",
+            memory_id,
+            old_checksum,
+            path,
+            ",".join(normalized_tags),
+            content,
+        )
+
+        if not self._consume_confirmation(
+            confirmation_token,
+            op="replace",
+            memory_id=memory_id,
+            checksum=checksum,
+        ):
+            return (
+                "ERROR: Confirmation invalid, expired, or does not match "
+                "the requested replacement. Preview again and use the latest "
+                "confirmation token."
             )
 
-            content = str(memory.get("content", ""))
+        with self._lock:
+            memories = self._load()
+            current = self._find_memory(memory_id)
 
-            lines.append(f"[{timestamp}] [{path}] {content}")
+            if current is None:
+                return f"ERROR: No active memory found with ID '{memory_id}'."
 
-        return "Most recent persistent memories:\n" + "\n".join(lines)
+            current_checksum = self._checksum(
+                "replace",
+                memory_id,
+                str(current.get("content", "")),
+                str(current.get("path", "")),
+                ",".join(self._normalize_tags(current.get("tags", []))),
+            )
+
+            if current_checksum != old_checksum:
+                return (
+                    "ERROR: Memory changed since preview. "
+                    "Preview the replacement again."
+                )
+
+            updated_memories = [
+                memory
+                for memory in memories
+                if str(memory.get("id", "")) != memory_id
+            ]
+
+            history_entry = dict(current)
+            history_entry["archived_at"] = datetime.now().isoformat()
+            history_entry["archive_reason"] = "replaced"
+
+            new_entry = {
+                "id": str(uuid.uuid4()),
+                "content": content,
+                "path": path,
+                "tags": normalized_tags,
+                "timestamp": datetime.now().isoformat(),
+                "replaces": memory_id,
+                "confirmed_by": "manual_confirmation",
+            }
+
+            updated_memories.append(new_entry)
+
+            try:
+                self._append(self._history_file, history_entry)
+                self._rewrite_active(updated_memories)
+            except Exception as e:
+                return f"ERROR: Could not replace memory: {e}"
+
+            self._record_event(
+                action="replace",
+                target_id=new_entry["id"],
+                summary=content,
+                path=path,
+                tags=",".join(normalized_tags),
+                tokens=self._approx_tokens(content),
+            )
+
+        return (
+            "Confirmed and replaced active memory. "
+            f"Previous ID: {memory_id}. "
+            f"New memory ID: {new_entry['id']} "
+            f"({self._approx_tokens(content)} tokens)"
+        )
+
+    def delete_memory(
+        self,
+        memory_id: str = Field(
+            ...,
+            description=(
+                "Exact ID of the active memory to remove. "
+                "Use only when the user explicitly asks to delete "
+                "or forget it."
+            ),
+        ),
+    ) -> str:
+        """
+        Preview removing an active memory.
+
+        This does NOT remove it until confirm_delete_memory is called.
+        """
+        memory_id = memory_id.strip()
+
+        if not memory_id:
+            return "ERROR: Memory ID cannot be empty."
+
+        target = self._find_memory(memory_id)
+
+        if target is None:
+            return f"ERROR: No active memory found with ID '{memory_id}'."
+
+        checksum = self._checksum(
+            "delete",
+            memory_id,
+            str(target.get("content", "")),
+            str(target.get("path", "uncategorized")),
+            self._describe_tags(target),
+        )
+
+        return self._preview(
+            op="delete",
+            memory_id=memory_id,
+            checksum=checksum,
+            details=(
+                f"Delete active memory [{memory_id}] "
+                f"[{target.get('path', 'uncategorized')}] "
+                f"[tags={self._describe_tags(target)}] "
+                f"({self._approx_tokens(str(target.get('content', '')))} tokens): "
+                f"{target.get('content', '')}"
+            ),
+        )
+
+    def confirm_delete_memory(
+        self,
+        confirmation_token: str = Field(
+            ...,
+            description=(
+                "Confirmation token returned by delete_memory. "
+                "Required to complete a pending delete operation."
+            ),
+        ),
+        memory_id: str = Field(
+            ...,
+            description="Same memory ID previewed by delete_memory.",
+        ),
+    ) -> str:
+        """
+        Complete removing an active memory after explicit confirmation.
+
+        The memory is NOT permanently destroyed.
+        It is moved to memory_deleted.jsonl and can later be restored.
+        """
+        memory_id = memory_id.strip()
+
+        if not memory_id:
+            return "ERROR: Memory ID cannot be empty."
+
+        target = self._find_memory(memory_id)
+
+        if target is None:
+            return f"ERROR: No active memory found with ID '{memory_id}'."
+
+        checksum = self._checksum(
+            "delete",
+            memory_id,
+            str(target.get("content", "")),
+            str(target.get("path", "uncategorized")),
+            self._describe_tags(target),
+        )
+
+        if not self._consume_confirmation(
+            confirmation_token,
+            op="delete",
+            memory_id=memory_id,
+            checksum=checksum,
+        ):
+            return (
+                "ERROR: Confirmation invalid, expired, or does not match "
+                "the requested deletion. Preview again and use the latest "
+                "confirmation token."
+            )
+
+        with self._lock:
+            current = self._find_memory(memory_id)
+
+            if current is None:
+                return f"ERROR: No active memory found with ID '{memory_id}'."
+
+            current_checksum = self._checksum(
+                "delete",
+                memory_id,
+                str(current.get("content", "")),
+                str(current.get("path", "uncategorized")),
+                self._describe_tags(current),
+            )
+
+            if current_checksum != checksum:
+                return "ERROR: Memory changed since preview. Preview again."
+
+            remaining = [
+                memory
+                for memory in self._load()
+                if str(memory.get("id", "")) != memory_id
+            ]
+
+            deleted_entry = dict(current)
+            deleted_entry["deleted_at"] = datetime.now().isoformat()
+            deleted_entry["deletion_type"] = "recoverable"
+
+            try:
+                self._append(self._deleted_file, deleted_entry)
+                self._rewrite_active(remaining)
+            except Exception as e:
+                return f"ERROR: Could not delete memory: {e}"
+
+            self._record_event(
+                action="delete",
+                target_id=memory_id,
+                summary=str(current.get("content", "")),
+                path=str(current.get("path", "uncategorized")),
+                tags=self._describe_tags(current),
+                tokens=self._approx_tokens(str(current.get("content", ""))),
+            )
+
+        return (
+            "Confirmed and removed active memory. "
+            "Moved to recoverable deleted memory. "
+            f"ID: {memory_id}"
+        )
+
+    def restore_memory(
+        self,
+        memory_id: str = Field(
+            ...,
+            description=(
+                "Exact ID of a deleted memory to restore. "
+                "Use only when the user explicitly asks to restore "
+                "a deleted memory."
+            ),
+        ),
+    ) -> str:
+        """
+        Preview restoring one recoverably deleted memory.
+
+        This does NOT restore it until confirm_restore_memory is called.
+        """
+        memory_id = memory_id.strip()
+
+        if not memory_id:
+            return "ERROR: Memory ID cannot be empty."
+
+        target = self._find_deleted_memory(memory_id)
+
+        if target is None:
+            return f"ERROR: No deleted memory found with ID '{memory_id}'."
+
+        checksum = self._checksum(
+            "restore",
+            memory_id,
+            str(target.get("content", "")),
+            str(target.get("path", "uncategorized")),
+            self._describe_tags(target),
+        )
+
+        return self._preview(
+            op="restore",
+            memory_id=memory_id,
+            checksum=checksum,
+            details=(
+                f"Restore deleted memory [{memory_id}] "
+                f"[{target.get('path', 'uncategorized')}] "
+                f"[tags={self._describe_tags(target)}] "
+                f"({self._approx_tokens(str(target.get('content', '')))} tokens): "
+                f"{target.get('content', '')}"
+            ),
+        )
+
+    def confirm_restore_memory(
+        self,
+        confirmation_token: str = Field(
+            ...,
+            description=(
+                "Confirmation token returned by restore_memory. "
+                "Required to complete a pending restore operation."
+            ),
+        ),
+        memory_id: str = Field(
+            ...,
+            description="Same memory ID previewed by restore_memory.",
+        ),
+    ) -> str:
+        """
+        Complete restoring one recoverably deleted memory after explicit
+        confirmation.
+        """
+        memory_id = memory_id.strip()
+
+        if not memory_id:
+            return "ERROR: Memory ID cannot be empty."
+
+        target = self._find_deleted_memory(memory_id)
+
+        if target is None:
+            return f"ERROR: No deleted memory found with ID '{memory_id}'."
+
+        checksum = self._checksum(
+            "restore",
+            memory_id,
+            str(target.get("content", "")),
+            str(target.get("path", "uncategorized")),
+            self._describe_tags(target),
+        )
+
+        if not self._consume_confirmation(
+            confirmation_token,
+            op="restore",
+            memory_id=memory_id,
+            checksum=checksum,
+        ):
+            return (
+                "ERROR: Confirmation invalid, expired, or does not match "
+                "the requested restoration. Preview again and use the latest "
+                "confirmation token."
+            )
+
+        with self._lock:
+            active_memories = self._load()
+
+            for memory in active_memories:
+                if str(memory.get("id", "")) == memory_id:
+                    return "ERROR: This memory is already active."
+
+            deleted_memories = self._load_file(self._deleted_file)
+            current = self._find_deleted_memory(memory_id)
+
+            if current is None:
+                return f"ERROR: No deleted memory found with ID '{memory_id}'."
+
+            current_checksum = self._checksum(
+                "restore",
+                memory_id,
+                str(current.get("content", "")),
+                str(current.get("path", "uncategorized")),
+                self._describe_tags(current),
+            )
+
+            if current_checksum != checksum:
+                return "ERROR: Deleted memory changed since preview. Preview again."
+
+            active_entry = dict(current)
+            active_entry.pop("deleted_at", None)
+            active_entry.pop("deletion_type", None)
+            active_entry["restored_at"] = datetime.now().isoformat()
+            active_entry["confirmed_by"] = "manual_confirmation"
+
+            remaining_deleted = [
+                memory
+                for memory in deleted_memories
+                if str(memory.get("id", "")) != memory_id
+            ]
+
+            active_memories.append(active_entry)
+
+            try:
+                self._rewrite_active(active_memories)
+                self._rewrite_deleted(remaining_deleted)
+            except Exception as e:
+                return f"ERROR: Could not restore memory: {e}"
+
+            self._record_event(
+                action="restore",
+                target_id=memory_id,
+                summary=str(current.get("content", "")),
+                path=str(current.get("path", "uncategorized")),
+                tags=self._describe_tags(current),
+                tokens=self._approx_tokens(str(current.get("content", ""))),
+            )
+
+        return f"Confirmed and restored memory to active memory: {memory_id}"
