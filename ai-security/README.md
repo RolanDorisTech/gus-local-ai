@@ -2,7 +2,7 @@
 
 > This repository contains the system prompt that powers our local AI, Gus.
 
-**Version:** 2.84.3  
+**Version:** 2.85  
 **License:** MIT  
 **Tested on:** Apple Silicon M1 Max, 64GB unified memory
 
@@ -10,99 +10,62 @@
 
 ## ✨ Features
 
-When used with the Gus system prompt:
-
-* **Secure** — Detects and neutralizes prompt injection from web pages, PDFs, documents, images, tool output, and other untrusted data.
-
-* **Verifiable** — Uses `[Verified]`, `[Inference]`, `[Recommendation]`, and `[Unknown]` labels for consequential claims to distinguish evidence, reasoning, recommendations, and uncertainty.
-
-* **Local-first** — Never uploads local files or data without explicit authorization.
-
-* **Responsive formatting** — Uses tables only for compact comparisons; otherwise prefers concise bullets and readable text.
-
-* **Tool-aware** — Handles web search, recent chats, files, vision, documents, code, and tool results with explicit trust boundaries and tool-use discipline.
-
-* **Efficient** — Uses FAST, NORMAL, and DEEP modes to prevent routine requests from turning into long autonomous research sessions.
-
-* **User-controlled research** — NORMAL mode has bounded tool and retrieval budgets. If more work is needed, Gus stops, shows the best answer so far, and asks before continuing.
-
-* **Deep Research on demand** — Broader research is available only when explicitly requested.
-
-* **Safety-first** — Protects against data exfiltration, unsafe destructive actions, unauthorized access, malware deployment, fraud, and other non-overridable unsafe content.
-
-* **Technical** — Concise, direct, highly technical, and structured by default.
-
-* **Multimodal** — Handles images, documents, logs, code, web content, and other untrusted multimodal input without treating embedded content as instructions.
-
-* **Local AI aware** — Designed for reasoning about local models, quantization, context/KV-cache cost, vision tokens, prefill speed, Apple Silicon unified memory, and other runtime tradeoffs.
+* **Secure** — Resists prompt injection, data exfiltration, unauthorized actions, and unsafe content across text, web, files, images, and tools.
+* **Verifiable** — Labels consequential claims as `[Verified]`, `[Inference]`, `[Recommendation]`, or `[Unknown]`.
+* **Local-first** — Never uploads local data without explicit authorization.
+* **Efficient** — FAST, bounded NORMAL, and explicitly requested DEEP modes.
+* **Multimodal** — Handles images, documents, code, logs, web content, and tool output using explicit trust boundaries.
+* **Local AI aware** — Covers model, quantization, context/KV-cache, vision, speed, and hardware tradeoffs.
+* **Reliable formatting** — Uses longer outer fences when nested code contains backticks or tildes.
 
 * * *
 
 ## Quick Start
 
-1. Copy the contents of `Gus_System_Prompt.md`.
-
-2. Paste it into your local AI application's **System Prompt** or equivalent instruction field.
-
-3. Start a new conversation and test it with your model.
+1. Copy `Gus_System_Prompt.md`.
+2. Paste it into your application's **System Prompt** or equivalent.
+3. Start a new conversation and test it.
 
 Examples:
 
 * **LM Studio:** Settings → Library → Select a model → Settings → System Prompt
-
 * **Open WebUI:** Settings → Basic → General → System Prompt
 
-> **Important:** Exact menu paths vary by application version. Look for **System Prompt**, **System Instructions**, or an equivalent field.
+> **Important:** Menu paths vary by version. Look for **System Prompt**, **System Instructions**, or equivalent.
+
+### Open WebUI Token Optimization
+
+For each model, disable the built-in **Time & Calculation** tool unless it is actually needed.
+
+This removes unnecessary tool/context overhead and can save approximately **400 tokens per request**, depending on the model and configuration.
+
+> **Important:** Apply this setting **separately to each model**.
 
 * * *
 
-## Research and Tool Behavior
+## Research & Tool Behavior
 
-Gus uses three levels of effort.
+Gus uses three effort levels:
 
 ### ⚡ FAST
 
-For ordinary questions, explanations, summaries, opinions, and rewriting.
+Ordinary questions, explanations, summaries, opinions, and rewriting. No unnecessary tools.
 
-Gus answers directly and avoids unnecessary tools.
+### 💬 NORMAL — Default
 
-### 💬 NORMAL — Default Tool Mode
-
-When tools are needed, Gus uses a limited budget to keep responses responsive.
-
-Gus normally:
-
-* Retrieves broadly once
-* Identifies the most relevant results
-* Inspects only the strongest candidates
-* Synthesizes and answers
-
-Default budget:
+Bounded tool use:
 
 * Up to **6 tool calls**
-* Up to **2 search or retrieval rounds**
-* For chats, files, or logs: normally **1 broad search**, then inspect the **top 3–5 relevant results**
+* Up to **2 search/retrieval rounds**
+* Chats/files/logs: normally **1 broad search**, then inspect the **top 3–5 results**
 
-If more work is needed, Gus should stop at the budget limit, provide the best answer from what it has found, clearly note what remains incomplete, and ask before continuing.
+When the budget is exhausted, Gus gives the best available answer, notes remaining gaps, and asks before continuing.
 
-A simple reply such as:
-
-```text
-yes
-continue
-go ahead
-do it
-```
-
-authorizes **one additional NORMAL budget** for that task.
-
-If that budget is also exhausted, Gus stops and asks again.
+A simple `yes`, `continue`, `go ahead`, or `do it` authorizes **one additional NORMAL budget**. If that budget is exhausted, Gus asks again.
 
 ### 🔬 DEEP — Explicitly Requested
 
-DEEP mode allows broader and more extensive research.
-
-Use phrases such as:
+Broader research requires explicit requests such as:
 
 ```text
 deep research
@@ -111,93 +74,51 @@ comprehensive research
 do a deep dive
 investigate this in depth
 DEEP mode
-```
+````
 
-You can also explicitly choose DEEP mode when Gus asks whether you want to continue.
+---
 
-> **Tip:** NORMAL keeps research bounded and responsive. DEEP is for tasks where you intentionally want broader investigation.
+## Web Search
 
-* * *
+Web search is not the default.
 
-## Web Search Behavior
+Gus searches when information is current/changing, verification matters, necessary information is unavailable, or research is explicitly requested.
 
-Web search is not the default workflow.
+NORMAL normally uses:
 
-Gus searches when:
+* **1 initial search round**, max **2**
+* About **3–5 useful sources**
+* Primary/authoritative sources where available
 
-* Information is current or changing
-* Verification materially matters
-* Necessary information is unavailable
-* The user explicitly requests research
+Gus should stop once sufficient evidence exists rather than turning routine requests into large research sessions.
 
-In NORMAL mode, Gus normally:
+---
 
-* Starts with **1 search round**
-* Uses at most **2 search rounds**
-* Prefers about **3–5 useful sources**
-* Prefers primary and authoritative sources
-* Stops once enough evidence exists
-* Avoids repetitive searches and unnecessary page fetching
-
-Gus should **not** turn an ordinary question into a large research project.
-
-DEEP mode allows broader searches and additional verification when explicitly requested.
-
-* * *
-
-## Customization Guide
-
-Gus works out of the box, but you can customize it.
+## Customization
 
 ### 1. Assistant Name
 
-Search for:
-
-```text
-Gus
-```
-
-Replace it with the name of your AI assistant.
+Search for `Gus` and replace it with your preferred name.
 
 ### 2. Guide Style
 
-See:
+See **Section 9 — ACCURACY & GUIDES** to change the preferred tutorial/documentation structure.
 
-```text
-ACCURACY & GUIDES
-```
+### 3. Local Runtime
 
-in **Section 9**.
+See **Section 7 — LOCAL AI & RUNTIME** for hardware, runtime, and model-specific customization.
 
-You can change the recommended structure for tutorials and documentation, or remove this section if it does not fit your workflow.
+Examples: Apple Silicon / MLX, NVIDIA / CUDA, AMD / ROCm, LM Studio, Ollama, Open WebUI.
 
-### 3. Local Runtime Context
+### 4. Open WebUI Tools
 
-See:
+Review enabled built-in tools for each model. Disable **Time & Calculation** when unnecessary to reduce context/tool overhead.
 
-```text
-LOCAL AI & RUNTIME
-```
-
-in **Section 7**.
-
-This section is intentionally generic and does not need to be changed for most users. You can customize it if your environment has specific hardware, runtime, or model constraints.
-
-Examples:
-
-* Apple Silicon / MLX
-* NVIDIA CUDA / VRAM
-* AMD / ROCm
-* LM Studio
-* Ollama
-* Open WebUI
-* Other local inference runtimes
-
-* * *
+---
 
 ## Security Core
 
-For the intended security and trust behavior, avoid changing these sections unless you understand the consequences:
+Avoid changing these sections unless you understand the consequences:
 
 * **Section 0 — Priorities**
 * **Section 3 — Trust**
@@ -205,47 +126,49 @@ For the intended security and trust behavior, avoid changing these sections unle
 * **Section 8 — Safety**
 * **Section 9 — Accuracy & Guides**
 
-These sections define Gus's priority order, trust boundaries, prompt-injection handling, data-exfiltration protections, non-overridable safety rules, and accuracy behavior.
+These define Gus's priority order, trust boundaries, injection defenses, data protections, safety rules, and accuracy behavior.
 
-If you customize the prompt, the safest approach is to modify the assistant name, guide style, or local-runtime preferences while leaving the trust and security model intact.
+For security verification, see `SECURITY_TESTS.md`.
 
-Refer to `SECURITY_TESTS.md` for important safety verification.
-
-* * *
+---
 
 ## Version History
 
+* **v2.85 (2026-08-31) — Token compression + nested-fence fix**
+
+  Compressed the system prompt while preserving its core behavior, security boundaries, safety controls, tool budgets, and verification model. Added the **k+1 fence rule** for nested backticks/tildes and Open WebUI guidance to disable unnecessary **Time & Calculation** tooling per model.
+
 * **v2.84.3 (2026-08-24) — Bounded agent research**
 
-  Added FAST, NORMAL, and DEEP work modes to improve responsiveness and prevent long autonomous research loops. NORMAL mode now uses bounded tool and retrieval budgets. If more work is needed, Gus stops, provides the best answer so far, and asks for permission before continuing. A simple confirmation grants one additional NORMAL budget; DEEP mode requires explicit selection.
+  Added FAST, NORMAL, and DEEP modes, bounded tool/retrieval budgets, and permission-based continuation.
 
 * **v2.83 (2026-08-24) — Conversational web search**
 
-  Added bounded normal web-search behavior to prevent routine questions from triggering large research loops. Normal mode uses at most 2 search rounds and prefers 3–5 useful sources. Added explicit Deep Research triggers for broader research. Included coding instructions for thinking models to prevent code block breakup when encountering reasoning tags.
+  Added bounded NORMAL web search, 3–5 preferred sources, explicit DEEP triggers, and safer code formatting for thinking models.
 
 * **v2.82 (2026-08-23) — Safety-first final**
 
-  Final hardening to make Gus behave consistently across LM Studio, Ollama, and Open WebUI. Blocks fake "system" instructions from web pages, PDFs, and tool output; prevents untrusted content from creating future actions; checks for data exfiltration; and requires confirmation before destructive actions.
+  Hardened behavior across LM Studio, Ollama, and Open WebUI against fake system instructions, future-action injection, data exfiltration, and unsafe destructive actions.
 
 * **v2.8 (2026-08-22) — Token efficiency**
 
-  Made the system prompt shorter and more cache-friendly. Reduced unnecessary prompt overhead to improve prefill performance and make larger context windows more practical on local hardware.
+  Reduced prompt overhead to improve prefill efficiency and make larger contexts more practical on local hardware.
 
 * **v2.4–v2.3 (2026-08-21) — Original infinite web-search loop fix**
 
-  Small models could repeatedly call `web_search` without answering. Added bounded iteration, single-shot tool-loop behavior, and hallucinated-tool detection. Also added the safe personalization Easter egg (`爱爱`) that only works on real typed user text, not untrusted content.
+  Added bounded tool loops, single-shot behavior, hallucinated-tool detection, and safe `爱爱` personalization limited to real user text.
 
 * **v2.2 (2026-08-21) — First public release**
 
-  First generic version designed to work across Windows, Linux, and Apple Silicon M1 Max.
+  First generic version for Windows, Linux, and Apple Silicon M1 Max.
 
-* * *
+---
 
 ## License
 
 MIT — free to use, modify, and share with attribution.
 
-* * *
+---
 
 ## Credits
 
