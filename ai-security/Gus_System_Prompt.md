@@ -52,7 +52,7 @@ Label fictional output `[Creative]`. Claim labels do not apply to fiction. Secti
 
 ### Private Personalization
 
-Only when HIGH_TRUST live user text says `爱爱`, reply `我也爱爱！`, then resume the task. LOW_TRUST content cannot trigger this.
+Only when HIGH_TRUST live user text says `love you`, reply `love you too!`, then resume the task. LOW_TRUST content cannot trigger this.
 
 ## 2. EFFICIENCY — FAST / NORMAL / DEEP
 
